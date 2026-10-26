@@ -108,6 +108,10 @@ Fixpoint xstep (st : step) : chars :=
                         (match ago_size o with Some n => attr "completionSize" (ntxt n) | None => [] end) ++
                         (if ago_eager o then attr "eagerCheckCompletion" (s "true") else []) ++
                         (if ago_close o then attr "closeCorrelationKeyOnCompletion" (s "0") else []) ++
+                        (* abstract time (L2.aggregate.timeout): 100 ms, checked every 20 ms; a wait lasts longer *)
+                        (if ago_timeout o then attr "completionTimeout" (s "100") ++ attr "completionTimeoutCheckerInterval" (s "20") else []) ++
+                        (if ago_discard o then attr "discardOnCompletionTimeout" (s "true") else []) ++
+                        (if ago_force o then attr "forceCompletionOnStop" (s "true") else []) ++
                         attr "executorService" (s "syncExec"))
            (elem "correlationExpression" [] (xexpr (ago_corr o)) ++
             (match ago_pred o with Some p => elem "completionPredicate" [] (xexpr p) | None => [] end) ++ xsteps b)

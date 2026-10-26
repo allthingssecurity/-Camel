@@ -118,3 +118,14 @@ so far are the aggregator's deferred output (timing), not leaks. A background hu
 - What the first runs showed: the CODE "with clauses" rules are per route (has_clauses); onRedelivery is a redelivery
   ... (corrected: a clause WITHOUT STEPS inherits the error handler's maximumRedeliveries, onRedelivery does not; DOC-BUG); the doTry escape finding crosses direct:; finding C (doCatch skipped
   after a continued exception) also without a called route.
+
+## L2 aggregate completionTimeout (2026-10-26, IN PROGRESS: paused here)
+- Done: agg_opts ago_timeout/ago_discard/ago_force; abstract time via sends to "~wait" / "~stop" (printed (wait)/(stop));
+  complete_groups in run_case_ (L2.aggregate.timeout); XML/YAML attributes (completionTimeout 100, checker 20 ms);
+  harness: (wait) sleeps 400 ms, (stop) stops the context, events compared sorted ("W[...]"); family agt
+  (gen_agt_case). First runs: agt2-real 400 cases / 0 mismatches, 321 timeout hits (slow: ~0.7 s per case).
+- Next: Doc mode + XML/YAML runs of agt; a timeout group completing during a later send (sends > 100 ms) may give
+  noise; then completionInterval, then the rest of the L2 list (parallelProcessing, streaming split, wireTap,
+  enrich/pollEnrich, circuitBreaker, throttle, idempotent removeOnFailure).
+- Sweeps: always through the guard (scratchpad guarded_sweep.sh: open files < 200k, load < 16, disk >= 15 GB),
+  one JVM at a time.

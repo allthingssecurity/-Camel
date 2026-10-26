@@ -127,10 +127,12 @@ Record split_opts : Type := mkSplit {
 (** Aggregate options modelled so far [M:aggregate]: the node id (the generator names each aggregator), correlation
     expression, strategy, completionSize, completionPredicate, eagerCheckCompletion, closeCorrelationKeyOnCompletion
     (unbounded). The output runs in the caller's thread (a SynchronousExecutorService [AGG.46-47], set by the harness).
-    Not yet: timeouts and intervals (time), repositories, batch consumers, controllers, optimistic locking. *)
+    completionTimeout, discardOnCompletionTimeout and forceCompletionOnStop are modelled with abstract time (L2.aggregate.timeout).
+    Not yet: completionInterval, repositories, batch consumers, controllers, optimistic locking. *)
 Record agg_opts : Type := mkAgg {
   ago_id : chars; ago_corr : expr; ago_strat : strat; ago_size : option nat; ago_pred : option expr;
-  ago_eager : bool; ago_close : bool }.
+  ago_eager : bool; ago_close : bool;
+  ago_timeout : bool; ago_discard : bool; ago_force : bool }.
 
 (** Load balancers modelled so far: round robin, and failover in its default mode (not round robin, not sticky),
     with the monitored exceptions and maximumFailoverAttempts ([M:lb:failoverLoadBalancer]). *)
@@ -383,6 +385,31 @@ Fixpoint sdt (s : step) : bool :=
   end.
 Definition lsdt (ss : list step) : bool := existsb sdt ss.
 
+(** The aggregator with node id [id] in some steps: its options and steps. *)
+Fixpoint find_agg_s (id : chars) (s : step) : option (agg_opts * list step) :=
+  let fix l (ss : list step) : option (agg_opts * list step) :=
+    match ss with [] => None | x :: r => match find_agg_s id x with Some a => Some a | None => l r end end in
+  let fix lw (ws : list (expr * list step)) : option (agg_opts * list step) :=
+    match ws with [] => None | (_, b) :: r => match l b with Some a => Some a | None => lw r end end in
+  let fix lc (cs : list (list chars * option expr * list step)) : option (agg_opts * list step) :=
+    match cs with [] => None | (_, b) :: r => match l b with Some a => Some a | None => lc r end end in
+  match s with
+  | SAggregate o b => if ceqs (ago_id o) id then Some (o, b) else l b
+  | SDoTry b cs f => match l b with Some a => Some a | None =>
+                     match lc cs with Some a => Some a | None => match f with Some fb => l fb | None => None end end end
+  | SFilter _ b | SPipeline b | SSplit _ _ b | SLoop _ _ _ b | SIdem _ _ _ _ b => l b
+  | SMulticast _ b | SLB _ _ b => l b
+  | SChoice ws o => match lw ws with Some a => Some a | None => match o with Some b => l b | None => None end end
+  | _ => None
+  end.
+Fixpoint find_some (f : step -> option (agg_opts * list step)) (ss : list step) : option (agg_opts * list step) :=
+  match ss with [] => None | x :: r => match f x with Some a => Some a | None => find_some f r end end.
+Fixpoint find_agg (P : list route) (id : chars) : option (agg_opts * list step) :=
+  match P with
+  | [] => None
+  | r :: rs => match find_some (find_agg_s id) (r_steps r) with Some a => Some a | None => find_agg rs id end
+  end.
+
 Inductive agres : Type :=
 | AgCont (g : gstate)                    (* aggregated; the group is not complete *)
 | AgEmit (g : gstate) (agx : exchange)   (* complete: the aggregated exchange goes through the steps *)
@@ -409,9 +436,9 @@ Definition agg_step (x : exchange) (g : gstate) (o : agg_opts) : agres :=
   | StNone => AgUns "AGG: no aggregation strategy (mandatory; refused at route creation) not modelled"
   | StOriginal => AgUns "AGG: useOriginal in an aggregator (which exchange is 'original') not documented"
   | st =>
-  match ago_size o, ago_pred o with
-  | None, None => AgUns "AGG: no completion (mandatory; refused at route creation) not modelled"
-  | _, _ =>
+  match ago_size o, ago_pred o, ago_timeout o with
+  | None, None, false => AgUns "AGG: no completion (mandatory; refused at route creation) not modelled"
+  | _, _, _ =>
   match eval_expr x (ago_corr o) with
   | EUns w => AgUns w
   | EV v =>
@@ -2029,10 +2056,54 @@ Definition clause_unconfigured (k : clause) : bool :=
   match c_steps k, c_handled k, c_continued k, c_redeliveries k, c_retry k, c_onredel k with
   | [], None, false, O, None, false => true | _, _, _, _, _, _ => false end.
 
+(*! R L2.aggregate.timeout DOC [AGG.251-253] [AGG.269-270] [AGG.274-277] [M:aggregate.completionTimeout] [M:aggregate.discardOnCompletionTimeout] [M:aggregate.forceCompletionOnStop] [M:aggregate.closeCorrelationKeyOnCompletion] *)
+(** Time is abstract: a "wait" (the send to ~wait) lasts longer than every completionTimeout, so every group of an
+    aggregator with completionTimeout has been "inactive ... for that particular correlation key within the period"
+    [AGG.251-253] and completes ("the first that triggers wins" [AGG.274-277]): its aggregated exchange goes through the
+    aggregator's steps, or is dropped with discardOnCompletionTimeout [M:aggregate.discardOnCompletionTimeout]. A
+    "stop" (the send to ~stop, the context being stopped) completes the groups of the aggregators with
+    forceCompletionOnStop [AGG.269-270]. Several groups completing at one wait or stop: in which order is not
+    documented (the harness compares their events as a set). A completed key is closed with
+    closeCorrelationKeyOnCompletion; whether a discarded group's key is closed is not documented (no rule). The steps
+    must end without an exception, a stop or a handled exception (not documented there, as for L2.aggregate). *)
+Fixpoint complete_groups (P : list route) (real : bool) (C : list clause) (E : ehconf) (fuel : nat) (stop : bool)
+  (l : list (chars * (chars * agroup))) (g : gstate) {struct l} : out :=
+  match l with
+  | [] => ODone g (new_exchange InOnly VNull []) [] []
+  | (id, (k, a)) :: r =>
+      match find_agg P id with
+      | None => OUns "AGG: a group of an unknown aggregator"
+      | Some (o, body) =>
+          if negb (if stop then ago_force o else ago_timeout o) then complete_groups P real C E fuel stop r g
+          else
+          let g1 := with_groups g id (agdel k) in
+          if negb stop && ago_discard o then
+            if ago_close o then OUns "AGG: closeCorrelationKeyOnCompletion with discardOnCompletionTimeout (is the key closed?) not documented"
+            else seqo (complete_groups P real C E fuel stop r g1) (fun g2 x2 t2 h2 => ODone g2 x2 t2 ("L2.aggregate.timeout" :: h2))
+          else
+          let g1 := if ago_close o then close_key g1 id k else g1 in
+          seqo (run P real C E fuel g1 (ag_x a) body) (fun g2 y t1 h1 =>
+            match x_exn y with
+            | Some _ => OUns "AGG: a failure in the steps of an aggregator not documented"
+            | None => if x_stop y || x_done y then OUns "AGG: a stop or handled exception in the steps of an aggregator not documented"
+                      else seqo (complete_groups P real C E fuel stop r g2) (fun g3 x3 t3 h3 =>
+                             ODone g3 x3 (t1 ++ t3) ("L2.aggregate.timeout" :: h1 ++ h3))
+            end)
+      end
+  end.
+Definition pending_groups (g : gstate) : list (chars * (chars * agroup)) :=
+  concat (map (fun '(id, gs) => map (fun ka => (id, ka)) gs) (g_agg g)).
+
 Fixpoint run_case_ (real : bool) (C : list clause) (E : ehconf) (OC : option oncomp) (fuel : nat) (P : list route) (g : gstate) (ss : list send) : list sres * gstate :=
   match ss with
   | [] => ([], g)
   | s :: ss' =>
+      if ceqs (s_to s) (str "~wait") || ceqs (s_to s) (str "~stop") then
+        match complete_groups P real C E fuel (ceqs (s_to s) (str "~stop")) (pending_groups g) g with
+        | ODone g' x t h => let '(rs, g'') := run_case_ real C E OC fuel P g' ss' in (SDone t x h :: rs, g'')
+        | OUns w => ([SUns w], g)
+        end
+      else
       match find_route P (s_to s) with
       | None => ([SUns "DC: send to direct: without a consumer"], g)
       | Some r =>
@@ -2208,7 +2279,7 @@ Proof. vm_compute. reflexivity. Qed.
 Definition hid : expr := XSimple (Simple.PExpr [Simple.TFn false (Simple.FHeader 0 (str "id"))]).
 Definition agg3 : list route :=
   [mkRoute (str "r0") (str "r0")
-     [SAggregate (mkAgg (str "a1") hid StGroupedBody (Some 3) None false false) [STo (EMock (str "out"))];
+     [SAggregate (mkAgg (str "a1") hid StGroupedBody (Some 3) None false false false false false) [STo (EMock (str "out"))];
       STo (EMock (str "after"))]].
 Definition snd1 (b : string) : send := mkSend (str "r0") InOnly (VStr (str b)) [(str "id", VStr (str "1"))].
 Example doc_aggregate_size_3 :

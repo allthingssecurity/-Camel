@@ -1090,7 +1090,8 @@ type split_opts = { sp_stop : bool; sp_group : int option; sp_delim :
 
 type agg_opts = { ago_id : chars; ago_corr : expr; ago_strat : strat;
                   ago_size : int option; ago_pred : expr option;
-                  ago_eager : bool; ago_close : bool }
+                  ago_eager : bool; ago_close : bool; ago_timeout : bool;
+                  ago_discard : bool; ago_force : bool }
 
 type lbkind =
 | LBRoundRobin
@@ -1224,6 +1225,14 @@ val fresh : exchange -> exchange
 val sdt : step -> bool
 
 val lsdt : step list -> bool
+
+val find_agg_s : chars -> step -> (agg_opts * step list) option
+
+val find_some :
+  (step -> (agg_opts * step list) option) -> step list -> (agg_opts * step
+  list) option
+
+val find_agg : route list -> chars -> (agg_opts * step list) option
 
 type agres =
 | AgCont of gstate
@@ -1401,6 +1410,12 @@ type sres =
 | SUns of string
 
 val clause_unconfigured : clause -> bool
+
+val complete_groups :
+  route list -> bool -> clause list -> ehconf -> int -> bool ->
+  (chars * (chars * agroup)) list -> gstate -> out
+
+val pending_groups : gstate -> (chars * (chars * agroup)) list
 
 val run_case_ :
   bool -> clause list -> ehconf -> oncomp option -> int -> route list ->

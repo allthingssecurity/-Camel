@@ -52,7 +52,8 @@ let split_opts () =
 
 let agg_opts () =
   { ago_id = fresh "agg"; ago_corr = fn (hdr (pick [ "a"; "b" ])); ago_strat = pick [ StLatest; StGroupedBody ];
-    ago_size = Some (range 1 2); ago_pred = None; ago_eager = false; ago_close = false }
+    ago_size = Some (range 1 2); ago_pred = None; ago_eager = false; ago_close = false;
+    ago_timeout = false; ago_discard = false; ago_force = false }
 
 let failover () = LBFailover ((if Random.bool () then [] else [ chars (pick catchables) ]),
                               Big_int_Z.big_int_of_int (pick [ -1; -1; 0; 1 ]))

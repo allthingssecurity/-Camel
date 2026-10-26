@@ -89,9 +89,10 @@ let rec pstep (s : step) : string =
         (pc o.sp_delim) (opt o.sp_maxfail) (pst o.sp_strat) (psteps b)
   | SAggregate (o, b) ->
       let opt = function None -> "-" | Some n -> string_of_int n in
-      Printf.sprintf "(aggregate %s %s %s %s %s %s %s%s)" (pc o.ago_id) (ex o.ago_corr) (pst o.ago_strat) (opt o.ago_size)
-        (match o.ago_pred with None -> "(none)" | Some p -> ex p) (if o.ago_eager then "1" else "0")
-        (if o.ago_close then "1" else "0") (psteps b)
+      let b01 x = if x then "1" else "0" in
+      Printf.sprintf "(aggregate %s %s %s %s %s %s %s %s %s %s%s)" (pc o.ago_id) (ex o.ago_corr) (pst o.ago_strat) (opt o.ago_size)
+        (match o.ago_pred with None -> "(none)" | Some p -> ex p) (b01 o.ago_eager)
+        (b01 o.ago_close) (b01 o.ago_timeout) (b01 o.ago_discard) (b01 o.ago_force) (psteps b)
   | SIdem (id, e, sk, eg, b) ->
       "(idempotent " ^ pc id ^ " " ^ ex e ^ " " ^ (if sk then "1" else "0") ^ " " ^ (if eg then "1" else "0") ^ psteps b ^ ")"
   | SLB (id, LBRoundRobin, b) -> "(lb " ^ pc id ^ " roundRobin" ^ psteps b ^ ")"
@@ -124,7 +125,9 @@ let poc = function
                 ^ (match o.oc_when with None -> "(none)" | Some p -> ex p) ^ " " ^ (if o.oc_before then "before" else "after") ^ " "
                 ^ (if o.oc_orig then "1" else "0") ^ psteps o.oc_steps ^ ")" ]
 let proute (r : route) = "(route " ^ pc r.r_id ^ " " ^ pc r.r_from ^ psteps r.r_steps ^ ")"
+let is_tick (s : send) = s.s_to = chars "~wait" || s.s_to = chars "~stop"
 let psend (s : send) =
+  if s.s_to = chars "~wait" then "(wait)" else if s.s_to = chars "~stop" then "(stop)" else
   "(send " ^ pc s.s_to ^ " " ^ (match s.s_mep with InOnly -> "InOnly" | InOut -> "InOut") ^ " " ^ canon s.s_body
   ^ String.concat "" (List.map (fun (k, v) -> " (h " ^ pc k ^ " " ^ canon v ^ ")") s.s_headers) ^ ")"
 
@@ -178,6 +181,8 @@ let gen_pred () : expr =
   XSimple (PPred (PS (ACmp (LFn (gen_fn ()), op, RLit (LQ (chars (pick texts)))), PNil)))
 
 (* [calls]: the direct routes this route may call (only later ones, so there are no cycles) *)
+let agt_bias = ref 1
+let has_timed = ref false   (* the program has an aggregator with completionTimeout or forceCompletionOnStop *)
 let rec gen_steps depth calls n = List.init n (fun _ -> gen_step depth calls)
 and gen_step depth calls : step =
   let leaf () =
@@ -240,12 +245,17 @@ and gen_step depth calls : step =
                  Random.bool (), false, gen_steps (depth - 1) calls (1 + Random.int 2))
     | 8 ->
         incr agg_counter;
+        (* completionTimeout (abstract time: the wait sends) on 1 aggregator in 3 (family agt: 2 in 3) *)
+        let timeout = Random.int 3 < !agt_bias in
         let size = if Random.int 4 = 0 then None else Some (1 + Random.int 3) in
-        let pred = if size = None || Random.int 4 = 0 then Some (gen_pred ()) else None in
+        let size = if timeout && Random.int 3 = 0 then None else size in
+        let pred = if (size = None && not timeout) || Random.int 4 = 0 then Some (gen_pred ()) else None in
         SAggregate ({ ago_id = chars ("agg" ^ string_of_int !agg_counter);
                       ago_corr = XSimple (PExpr [ TFn (false, FHeader (0, chars (pick [ "a"; "b"; "a"; "B1" ]))) ]);
                       ago_strat = (if Random.bool () then StLatest else StGroupedBody);
-                      ago_size = size; ago_pred = pred; ago_eager = Random.int 3 = 0; ago_close = Random.int 3 = 0 },
+                      ago_size = size; ago_pred = pred; ago_eager = Random.int 3 = 0; ago_close = Random.int 3 = 0;
+                      ago_timeout = timeout; ago_discard = timeout && Random.int 3 = 0;
+                      ago_force = (let f = Random.int 3 = 0 in if f || timeout then has_timed := true; f) },
                     gen_steps (depth - 1) calls (1 + Random.int 2))
     | 7 ->
         if Random.bool () then SMulticast (gen_strat (), gen_steps (depth - 1) calls (2 + Random.int 2))
@@ -336,6 +346,28 @@ let gen_case () : clause list * route list * send list =
                r_steps = [ SRemoveHeader (chars "dest"); STo (EMock (chars "m2")) ] } in
   (gen_clauses (), routes @ [ rdyn ], sends)
 
+(* family agt: focused programs for abstract time (L2.aggregate.timeout): aggregators keyed by a String header *)
+let gen_agt_case () : clause list * route list * send list =
+  has_timed := true;
+  let agg () =
+    incr agg_counter;
+    let timeout = Random.int 4 > 0 in
+    let size = if Random.bool () then Some (2 + Random.int 2) else None in
+    let size = if size = None && not timeout then Some 2 else size in
+    SAggregate ({ ago_id = chars ("agg" ^ string_of_int !agg_counter);
+                  ago_corr = XSimple (PExpr [ TFn (false, FHeader (0, chars (pick [ "a"; "b" ]))) ]);
+                  ago_strat = (if Random.bool () then StLatest else StGroupedBody);
+                  ago_size = size; ago_pred = None; ago_eager = false; ago_close = Random.int 4 = 0;
+                  ago_timeout = timeout; ago_discard = timeout && Random.int 3 = 0; ago_force = Random.int 3 = 0 },
+                [ STransform (XSimple (PExpr [ TFn (false, FBody); TText (chars "!") ])); STo (EMock (chars "m1")) ]) in
+  let r0 = { r_id = chars "r0"; r_from = chars "r0";
+             r_steps = (if Random.bool () then [ SSetHeader (chars "B1", XSimple (PExpr [ TText (chars "t") ])) ] else [])
+                       @ [ agg () ] @ (if Random.int 3 = 0 then [ agg () ] else []) @ [ STo (EMock (chars "m2")) ] } in
+  let sends = List.init (2 + Random.int 4) (fun _ ->
+      { s_to = chars "r0"; s_mep = InOnly; s_body = s_ (pick [ "p"; "q"; "r" ]);
+        s_headers = [ (chars "a", s_ (pick [ "x"; "y" ])); (chars "b", s_ (pick [ "x"; "y" ])) ] }) in
+  ([], [ r0 ], sends)
+
 let hits : (string, int) Hashtbl.t = Hashtbl.create 64
 let count_hits rs =
   List.iter (function
@@ -347,8 +379,15 @@ let () =
   let fam = Sys.argv.(1) and seed = int_of_string Sys.argv.(2) and count = int_of_string Sys.argv.(3) in
   Random.init seed;
   if fam = "rw" then rw_bias := 2;
+  if fam = "agt" then agt_bias := 2;
   for i = 1 to count do
-    let clauses, routes, sends = if fam = "combo" then Combo.gen_case () else gen_case () in
+    has_timed := false;
+    let clauses, routes, sends = if fam = "combo" then Combo.gen_case () else if fam = "agt" then gen_agt_case () else gen_case () in
+    (* abstract time (L2.aggregate.timeout): a wait after some sends, maybe a stop at the end *)
+    let tick n = { s_to = chars n; s_mep = InOnly; s_body = VNull; s_headers = [] } in
+    let sends = if not !has_timed then sends
+      else List.concat_map (fun s -> if Random.int 2 = 0 then [ s; tick "~wait" ] else [ s ]) sends
+           @ (if Random.int 2 = 0 then [ tick "~stop" ] else []) in
     (* route scoped clauses (L3.onException.scope): one in 4 (family scope: one in 2), on one of the program's routes *)
     let clauses = List.map (fun k -> if Random.int (if fam = "scope" then 2 else 4) = 0
                                      then { k with c_scope = Some (pick (List.map (fun r -> r.r_id) routes)) } else k) clauses in
@@ -357,7 +396,11 @@ let () =
     let oc = if fam = "oc" || Random.int 2 = 0 then gen_oc () else None in
     let rs, g = run_case (Sys.getenv_opt "MODE" = Some "real") clauses eh oc 400 routes g0 sends in
     count_hits rs;
-    let expected = String.concat " " (List.map sres_text rs) ^ " G=" ^ kvs g.g_global in
+    let rtext i r = match r, List.nth_opt sends i with
+      | SDone (tt, _, _), Some s when is_tick s ->
+          "W[" ^ String.concat "|" (List.sort compare (List.map (fun (EvMock (n, y, u)) -> pc n ^ "=" ^ snap ~unk:u y) tt)) ^ "]"
+      | _ -> sres_text r in
+    let expected = String.concat " " (List.mapi rtext rs) ^ " G=" ^ kvs g.g_global in
     Printf.printf "%s-%d-%d\t%s\t%s\t%s\t%s\t%s\t%s\n" fam seed i (String.concat " " (pclauses clauses :: peh eh @ poc oc @ List.map proute routes))
       (String.concat " " (List.map psend sends)) expected fam (pc (xml_program clauses eh oc routes)) (if List.exists (fun k -> k.c_scope <> None) clauses then "-" else pc (yaml_program clauses eh oc routes))
   done

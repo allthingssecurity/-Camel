@@ -115,6 +115,9 @@ Fixpoint ystep (st : step) : chars :=
                          (match ago_size o with Some n => [kv "completionSize" (ntxt n)] | None => [] end) ++
                          (if ago_eager o then [kv "eagerCheckCompletion" (s "true")] else []) ++
                          (if ago_close o then [kv "closeCorrelationKeyOnCompletion" (s "0")] else []) ++
+                         (if ago_timeout o then [kv "completionTimeout" (jstr (s "100")); kv "completionTimeoutCheckerInterval" (jstr (s "20"))] else []) ++
+                         (if ago_discard o then [kv "discardOnCompletionTimeout" (s "true")] else []) ++
+                         (if ago_force o then [kv "forceCompletionOnStop" (s "true")] else []) ++
                          [kv "executorService" (jstr (s "syncExec")); stepsf b])
   | SLoop e cp dw b =>
       step1 "loop" ([exprf e] ++ (if cp then [kv "copy" (s "true")] else []) ++ (if dw then [kv "doWhile" (s "true")] else []) ++ [stepsf b])

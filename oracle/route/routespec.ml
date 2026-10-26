@@ -18726,7 +18726,8 @@ type split_opts = { sp_stop : bool; sp_group : int option; sp_delim :
 
 type agg_opts = { ago_id : chars; ago_corr : expr; ago_strat : strat;
                   ago_size : int option; ago_pred : expr option;
-                  ago_eager : bool; ago_close : bool }
+                  ago_eager : bool; ago_close : bool; ago_timeout : bool;
+                  ago_discard : bool; ago_force : bool }
 
 type lbkind =
 | LBRoundRobin
@@ -19100,6 +19101,81 @@ let rec sdt s1 =
 
 let lsdt ss =
   existsb sdt ss
+
+(** val find_agg_s : chars -> step -> (agg_opts * step list) option **)
+
+let rec find_agg_s id s1 =
+  let l =
+    let rec l = function
+    | [] -> None
+    | x :: r -> (match find_agg_s id x with
+                 | Some a -> Some a
+                 | None -> l r)
+    in l
+  in
+  let lw =
+    let rec lw = function
+    | [] -> None
+    | p :: r ->
+      let (_, b) = p in (match l b with
+                         | Some a -> Some a
+                         | None -> lw r)
+    in lw
+  in
+  let lc =
+    let rec lc = function
+    | [] -> None
+    | p :: r ->
+      let (_, b) = p in (match l b with
+                         | Some a -> Some a
+                         | None -> lc r)
+    in lc
+  in
+  (match s1 with
+   | SFilter (_, b) -> l b
+   | SChoice (ws, o) ->
+     (match lw ws with
+      | Some a -> Some a
+      | None -> (match o with
+                 | Some b -> l b
+                 | None -> None))
+   | SPipeline b -> l b
+   | SDoTry (b, cs, f) ->
+     (match l b with
+      | Some a -> Some a
+      | None ->
+        (match lc cs with
+         | Some a -> Some a
+         | None -> (match f with
+                    | Some fb -> l fb
+                    | None -> None)))
+   | SSplit (_, _, b) -> l b
+   | SMulticast (_, b) -> l b
+   | SAggregate (o, b) -> if ceqs o.ago_id id then Some (o, b) else l b
+   | SLoop (_, _, _, b) -> l b
+   | SIdem (_, _, _, _, b) -> l b
+   | SLB (_, _, b) -> l b
+   | _ -> None)
+
+(** val find_some :
+    (step -> (agg_opts * step list) option) -> step list -> (agg_opts * step
+    list) option **)
+
+let rec find_some f = function
+| [] -> None
+| x :: r -> (match f x with
+             | Some a -> Some a
+             | None -> find_some f r)
+
+(** val find_agg : route list -> chars -> (agg_opts * step list) option **)
+
+let rec find_agg p id =
+  match p with
+  | [] -> None
+  | r :: rs ->
+    (match find_some (find_agg_s id) r.r_steps with
+     | Some a -> Some a
+     | None -> find_agg rs id)
 
 type agres =
 | AgCont of gstate
@@ -19988,8 +20064,485 @@ let agg_step x g o =
                    AgUns "AGG: correlation key that is a List not modelled"))
            | EUns w -> AgUns w)
         | None ->
-          AgUns
-            "AGG: no completion (mandatory; refused at route creation) not modelled"))
+          if o.ago_timeout
+          then (match eval_expr x o.ago_corr with
+                | EV v ->
+                  (match v with
+                   | VNull ->
+                     AgFail
+                       (mkExn (str "org.apache.camel.CamelExchangeException")
+                         (str "?") None)
+                   | VStr s1 ->
+                     (match text_of (VStr s1) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s2 -> (<=) s2 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VInt z0 ->
+                     (match text_of (VInt z0) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VLong z0 ->
+                     (match text_of (VLong z0) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VDbl q ->
+                     (match text_of (VDbl q) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VBool b ->
+                     (match text_of (VBool b) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VList l ->
+                     (match text_of (VList l) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled"))
+                | EUns w -> AgUns w)
+          else AgUns
+                 "AGG: no completion (mandatory; refused at route creation) not modelled"))
   | StOriginal ->
     AgUns
       "AGG: useOriginal in an aggregator (which exchange is 'original') not documented"
@@ -20857,8 +21410,485 @@ let agg_step x g o =
                    AgUns "AGG: correlation key that is a List not modelled"))
            | EUns w -> AgUns w)
         | None ->
-          AgUns
-            "AGG: no completion (mandatory; refused at route creation) not modelled"))
+          if o.ago_timeout
+          then (match eval_expr x o.ago_corr with
+                | EV v ->
+                  (match v with
+                   | VNull ->
+                     AgFail
+                       (mkExn (str "org.apache.camel.CamelExchangeException")
+                         (str "?") None)
+                   | VStr s1 ->
+                     (match text_of (VStr s1) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s2 -> (<=) s2 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VInt z0 ->
+                     (match text_of (VInt z0) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VLong z0 ->
+                     (match text_of (VLong z0) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VDbl q ->
+                     (match text_of (VDbl q) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VBool b ->
+                     (match text_of (VBool b) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled")
+                   | VList l ->
+                     (match text_of (VList l) with
+                      | Some k ->
+                        if (&&) o.ago_close (is_closed g o.ago_id k)
+                        then AgFail
+                               (mkExn
+                                 (str
+                                   "org.apache.camel.processor.aggregate.ClosedCorrelationKeyException")
+                                 (str "?") None)
+                        else let old = agget k (aglget o.ago_id g.g_agg) in
+                             let n0 =
+                               match old with
+                               | Some a -> Stdlib.Int.succ a.ag_n
+                               | None -> Stdlib.Int.succ 0
+                             in
+                             let ins =
+                               app
+                                 (match old with
+                                  | Some a -> a.ag_in
+                                  | None -> [])
+                                 (x :: [])
+                             in
+                             let agx =
+                               match st with
+                               | StGroupedBody ->
+                                 (match texts
+                                          (map (fun y -> y.x_msg.m_body) ins) with
+                                  | Some ts ->
+                                    (match ins with
+                                     | [] -> None
+                                     | y :: _ ->
+                                       Some (set_body (fresh y) (VList ts)))
+                                  | None -> None)
+                               | _ -> Some (fresh x)
+                             in
+                             (match agx with
+                              | Some agx0 ->
+                                if negb
+                                     (match st with
+                                      | StGroupedBody -> same_as_first ins
+                                      | _ -> true)
+                                then AgUns
+                                       "AGG: groupedBody of exchanges with different headers/properties (which ones it keeps) not documented"
+                                else let by_size =
+                                       match o.ago_size with
+                                       | Some s1 -> (<=) s1 n0
+                                       | None -> false
+                                     in
+                                     (match match o.ago_pred with
+                                            | Some p ->
+                                              eval_pred
+                                                (if o.ago_eager
+                                                 then x
+                                                 else agx0)
+                                                p
+                                            | None -> PB false with
+                                      | PB by_pred ->
+                                        if (||) by_size by_pred
+                                        then let g1 =
+                                               with_groups g o.ago_id
+                                                 (agdel k)
+                                             in
+                                             AgEmit
+                                             ((if o.ago_close
+                                               then close_key g1 o.ago_id k
+                                               else g1),
+                                             agx0)
+                                        else AgCont
+                                               (with_groups g o.ago_id
+                                                 (agput k { ag_x = agx0;
+                                                   ag_n = n0; ag_in = ins }))
+                                      | PUns0 w -> AgUns w)
+                              | None ->
+                                AgUns
+                                  "AGG: groupedBody of bodies that are not all Strings not modelled")
+                      | None ->
+                        AgUns
+                          "AGG: correlation key that is a List not modelled"))
+                | EUns w -> AgUns w)
+          else AgUns
+                 "AGG: no completion (mandatory; refused at route creation) not modelled"))
 
 type lcount =
 | LcN of int
@@ -22363,6 +23393,51 @@ let clause_unconfigured k =
                k.c_redeliveries))
   | _ :: _ -> false
 
+(** val complete_groups :
+    route list -> bool -> clause list -> ehconf -> int -> bool ->
+    (chars * (chars * agroup)) list -> gstate -> out **)
+
+let rec complete_groups p real c e fuel stop l g =
+  match l with
+  | [] -> ODone (g, (new_exchange InOnly VNull []), [], [])
+  | p0 :: r ->
+    let (id, p1) = p0 in
+    let (k, a) = p1 in
+    (match find_agg p id with
+     | Some p2 ->
+       let (o, body) = p2 in
+       if negb (if stop then o.ago_force else o.ago_timeout)
+       then complete_groups p real c e fuel stop r g
+       else let g1 = with_groups g id (agdel k) in
+            if (&&) (negb stop) o.ago_discard
+            then if o.ago_close
+                 then OUns
+                        "AGG: closeCorrelationKeyOnCompletion with discardOnCompletionTimeout (is the key closed?) not documented"
+                 else seqo (complete_groups p real c e fuel stop r g1)
+                        (fun g2 x2 t2 h2 -> ODone (g2, x2, t2,
+                        ("L2.aggregate.timeout" :: h2)))
+            else let g2 = if o.ago_close then close_key g1 id k else g1 in
+                 seqo (run0 p real c e fuel g2 a.ag_x body) (fun g3 y t1 h1 ->
+                   match y.x_exn with
+                   | Some _ ->
+                     OUns
+                       "AGG: a failure in the steps of an aggregator not documented"
+                   | None ->
+                     if (||) y.x_stop y.x_done
+                     then OUns
+                            "AGG: a stop or handled exception in the steps of an aggregator not documented"
+                     else seqo (complete_groups p real c e fuel stop r g3)
+                            (fun g4 x3 t3 h3 -> ODone (g4, x3, (app t1 t3),
+                            ("L2.aggregate.timeout" :: (app h1 h3)))))
+     | None -> OUns "AGG: a group of an unknown aggregator")
+
+(** val pending_groups : gstate -> (chars * (chars * agroup)) list **)
+
+let pending_groups g =
+  concat
+    (map (fun pat -> let (id, gs) = pat in map (fun ka -> (id, ka)) gs)
+      g.g_agg)
+
 (** val run_case_ :
     bool -> clause list -> ehconf -> oncomp option -> int -> route list ->
     gstate -> send list -> sres list * gstate **)
@@ -22370,27 +23445,34 @@ let clause_unconfigured k =
 let rec run_case_ real c e oC fuel p g = function
 | [] -> ([], g)
 | s1 :: ss' ->
-  (match find_route p s1.s_to with
-   | Some r ->
-     (match run0 p real c e fuel g
-              (set_route (new_exchange s1.s_mep s1.s_body s1.s_headers)
-                r.r_id)
-              r.r_steps with
-      | ODone (g', x, t, h) ->
-        let oc =
-          match p with
-          | [] -> None
-          | r1 :: _ -> if ceqs r1.r_from s1.s_to then oC else None
-        in
-        (match runoc p real c e fuel oc g' x with
-         | ODone (g2, x2, t2, h2) ->
-           let (rs, g'') =
-             run_case_ real c e oC fuel p (complete_uow real g2 x2) ss'
-           in
-           (((SDone ((app t t2), x2, (app h h2))) :: rs), g'')
-         | OUns w -> (((SUns w) :: []), g))
-      | OUns w -> (((SUns w) :: []), g))
-   | None -> (((SUns "DC: send to direct: without a consumer") :: []), g))
+  if (||) (ceqs s1.s_to (str "~wait")) (ceqs s1.s_to (str "~stop"))
+  then (match complete_groups p real c e fuel (ceqs s1.s_to (str "~stop"))
+                (pending_groups g) g with
+        | ODone (g', x, t, h) ->
+          let (rs, g'') = run_case_ real c e oC fuel p g' ss' in
+          (((SDone (t, x, h)) :: rs), g'')
+        | OUns w -> (((SUns w) :: []), g))
+  else (match find_route p s1.s_to with
+        | Some r ->
+          (match run0 p real c e fuel g
+                   (set_route (new_exchange s1.s_mep s1.s_body s1.s_headers)
+                     r.r_id)
+                   r.r_steps with
+           | ODone (g', x, t, h) ->
+             let oc =
+               match p with
+               | [] -> None
+               | r1 :: _ -> if ceqs r1.r_from s1.s_to then oC else None
+             in
+             (match runoc p real c e fuel oc g' x with
+              | ODone (g2, x2, t2, h2) ->
+                let (rs, g'') =
+                  run_case_ real c e oC fuel p (complete_uow real g2 x2) ss'
+                in
+                (((SDone ((app t t2), x2, (app h h2))) :: rs), g'')
+              | OUns w -> (((SUns w) :: []), g))
+           | OUns w -> (((SUns w) :: []), g))
+        | None -> (((SUns "DC: send to direct: without a consumer") :: []), g))
 
 (** val run_case :
     bool -> clause list -> ehconf -> oncomp option -> int -> route list ->
@@ -22620,7 +23702,20 @@ let rec xstep st =
                (if o.ago_close
                 then attr "closeCorrelationKeyOnCompletion" (s "0")
                 else [])
-               (attr "executorService" (s "syncExec"))))))
+               (app
+                 (if o.ago_timeout
+                  then app (attr "completionTimeout" (s "100"))
+                         (attr "completionTimeoutCheckerInterval" (s "20"))
+                  else [])
+                 (app
+                   (if o.ago_discard
+                    then attr "discardOnCompletionTimeout" (s "true")
+                    else [])
+                   (app
+                     (if o.ago_force
+                      then attr "forceCompletionOnStop" (s "true")
+                      else [])
+                     (attr "executorService" (s "syncExec")))))))))
        (app (elem "correlationExpression" [] (xexpr o.ago_corr))
          (app
            (match o.ago_pred with
@@ -23136,8 +24231,22 @@ let rec ystep st =
                    (if o.ago_close
                     then (kv0 "closeCorrelationKeyOnCompletion" (s0 "0")) :: []
                     else [])
-                   ((kv0 "executorService" (jstr (s0 "syncExec"))) :: (
-                   (stepsf b) :: []))))))))
+                   (app
+                     (if o.ago_timeout
+                      then (kv0 "completionTimeout" (jstr (s0 "100"))) :: (
+                             (kv0 "completionTimeoutCheckerInterval"
+                               (jstr (s0 "20"))) :: [])
+                      else [])
+                     (app
+                       (if o.ago_discard
+                        then (kv0 "discardOnCompletionTimeout" (s0 "true")) :: []
+                        else [])
+                       (app
+                         (if o.ago_force
+                          then (kv0 "forceCompletionOnStop" (s0 "true")) :: []
+                          else [])
+                         ((kv0 "executorService" (jstr (s0 "syncExec"))) :: (
+                         (stepsf b) :: [])))))))))))
    | SLoop (e, cp, dw, b) ->
      step1 "loop"
        (app ((exprf e) :: [])

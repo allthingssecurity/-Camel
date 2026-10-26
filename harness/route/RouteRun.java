@@ -206,9 +206,13 @@ public class RouteRun {
                 if (!p.head().equals("none")) d.completionPredicate(expr(p));
                 if (s.kids.get(6).atom.equals("1")) d.eagerCheckCompletion();
                 if (s.kids.get(7).atom.equals("1")) d.closeCorrelationKeyOnCompletion(0);
+                // abstract time (L2.aggregate.timeout): 100 ms, checked every 20 ms; a (wait) sleeps longer
+                if (s.kids.get(8).atom.equals("1")) d.completionTimeout(100).completionTimeoutCheckerInterval(20);
+                if (s.kids.get(9).atom.equals("1")) d.discardOnCompletionTimeout();
+                if (s.kids.get(10).atom.equals("1")) d.forceCompletionOnStop();
                 // the aggregated output runs in the caller's thread (aggregate-eip.adoc 46-47; TRUST.md)
                 d.executorService(new org.apache.camel.util.concurrent.SynchronousExecutorService());
-                steps(d, s, 8);
+                steps(d, s, 11);
                 return d;
             }
             case "routingSlip": {
@@ -429,6 +433,16 @@ public class RouteRun {
             ProducerTemplate t = ctx.createProducerTemplate();
             for (Sx s : parseAll(sends)) {
                 events.clear();
+                // abstract time: (wait) lasts longer than every completionTimeout; (stop) stops the context (the
+                // aggregators' forceCompletionOnStop); their events are compared as a set (sorted)
+                if (s.head().equals("wait") || s.head().equals("stop")) {
+                    if (s.head().equals("wait")) Thread.sleep(Long.getLong("wait.ms", 400)); else ctx.stop();
+                    List<String> ev;
+                    synchronized (events) { ev = new ArrayList<>(events); }
+                    Collections.sort(ev);
+                    out.add("W[" + String.join("|", ev) + "]");
+                    continue;
+                }
                 ExchangePattern p = s.kids.get(2).atom.equals("InOut") ? ExchangePattern.InOut : ExchangePattern.InOnly;
                 Object body = dec(s.kids.get(3).atom);
                 Map<String, Object> hs = new LinkedHashMap<>();
@@ -492,7 +506,7 @@ public class RouteRun {
                     if ("-".equals(text)) {   // no DSL form for this program (L6.yaml.onException.scope): counted, not compared
                         unspec++; unspecWhy.merge("L6: no YAML form for route scoped onException", 1, Integer::sum); agree++; continue;
                     }
-                    got = runCase(f[1], f[2], new ArrayList<>(), globals, text, dsl);
+                    got = runCase(f[1], f[2], Collections.synchronizedList(new ArrayList<>()), globals, text, dsl);
                     long dt = System.currentTimeMillis() - c0;
                     if (dt > 2000) System.err.println("SLOW " + dt + "ms " + f[0]);
                     if (LASTINFLIGHT[0] > 0) { System.err.println("  ^ case " + f[0]); LASTINFLIGHT[0] = 0; }

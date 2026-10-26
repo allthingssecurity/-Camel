@@ -185,7 +185,7 @@ Qed.
 Example aggregate_hyps_satisfiable :
   exists o, ago_pred o = None /\ ago_size o = Some 3 /\ 0 < 3 /\ groups_below g0 (ago_id o) 3.
 Proof.
-  exists (mkAgg (str "a1") hid StGroupedBody (Some 3) None false false).
+  exists (mkAgg (str "a1") hid StGroupedBody (Some 3) None false false false false false).
   repeat split; [lia|]. intros k a H. simpl in H. discriminate.
 Qed.
 
