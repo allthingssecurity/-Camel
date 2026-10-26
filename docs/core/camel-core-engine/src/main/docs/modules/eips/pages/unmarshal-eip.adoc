@@ -1,0 +1,176 @@
+= Unmarshal EIP
+:doctitle: Unmarshal
+:shortname: unmarshal
+:description: Deserializes the message body from a specific data format such as JSON, XML, CSV, or Protobuf into a Java object
+:since: 
+:supportlevel: Stable
+:tabs-sync-option:
+
+The xref:marshal-eip.adoc[Marshal] and xref:unmarshal-eip.adoc[Unmarshal] EIPs are used
+for xref:message-translator.adoc[Message Transformation].
+
+image::eip/MessageTranslator.gif[image]
+
+Camel has support for message transformation using several techniques.
+One such technique is xref:dataformats:index.adoc[Data Formats],
+where marshal and unmarshal come from.
+
+So in other words, the xref:marshal-eip.adoc[Marshal] and xref:unmarshal-eip.adoc[Unmarshal] EIPs
+are used with xref:dataformats:index.adoc[Data Formats].
+
+- _Marshal_: Transforms the message body (such as Java object) into a binary or textual format, ready to be wired over the network.
+- _Unmarshal_: Transforms data in some binary or textual format (such as received over the network)
+into a Java object; or some other representation according to the data format being used.
+
+== Example
+
+The following example reads JSON files from the inbox/json directory. `unmarshal` turns each file into a Map with
+xref:dataformats:jackson2-dataformat.adoc[Jackson] (a JSON object becomes a Map, a JSON array a List), so the route can
+read its fields, such as `${body[orderId]}`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+from("file:inbox/json")
+  .unmarshal().json(JsonLibrary.Jackson)
+  .log("Order ${body[orderId]} for customer ${body[customer]}")
+  .to("bean:validateOrder");
+----
+
+XML::
++
+[source,xml]
+----
+<route>
+  <from uri="file:inbox/json"/>
+  <unmarshal><json library="Jackson"/></unmarshal>
+  <log message="Order ${body[orderId]} for customer ${body[customer]}"/>
+  <to uri="bean:validateOrder"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: file:inbox/json
+      steps:
+        - unmarshal:
+            json:
+              library: Jackson
+        - log:
+            message: "Order ${body[orderId]} for customer ${body[customer]}"
+        - to:
+            uri: bean:validateOrder
+----
+====
+
+The next example reads XML files from the inbox/xml directory.
+Each file is then transformed into Java Objects using xref:dataformats:jaxb-dataformat.adoc[JAXB].
+Then a xref:ROOT:bean-component.adoc[Bean] is invoked that takes in the Java object.
+
+Then the reverse operation happens to transform the Java objects back into XML also via JAXB,
+but using the `marshal` operation.
+And finally, the message is routed to a xref:ROOT:jms-component.adoc[JMS] queue.
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+from("file:inbox/xml")
+  .unmarshal().jaxb("com.acme.order")
+  .to("bean:validateOrder")
+  .marshal().jaxb("com.acme.order")
+  .to("jms:queue:order");
+----
+
+XML::
++
+[source,xml]
+----
+<route>
+  <from uri="file:inbox/xml"/>
+  <unmarshal><jaxb contextPath="com.acme.order"/></unmarshal>
+  <to uri="bean:validateOrder"/>
+  <marshal><jaxb contextPath="com.acme.order"/></marshal>
+  <to uri="jms:queue:order"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: file:inbox/xml
+      steps:
+        - unmarshal:
+            jaxb:
+              contextPath: com.acme.order
+        - to:
+            uri: bean:validateOrder
+        - marshal:
+            jaxb:
+              contextPath: com.acme.order
+        - to:
+            uri: jms:queue:order
+----
+====
+
+== Allow Null Body
+
+Sometimes, there are situations where `null` can be a normal value for the body of a message but `null` by default is not an accepted value to unmarshal.
+To work around that, it is possible to allow `null` as value to a body to unmarshall
+using the option `allowNullBody` as shown in the next code snippets. A `null` body then skips the unmarshalling
+and leaves the message as it is, as `marshal` does; with `variableReceive`, that variable is set to `null`.
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+from("file:inbox/xml")
+  .unmarshal().allowNullBody().jaxb()
+  .to("bean:validateOrder");
+----
+
+XML::
++
+[source,xml]
+----
+<route>
+    <from uri="file:inbox/xml"/>
+    <unmarshal allowNullBody="true">
+        <jaxb contextPath="com.acme.model"/>
+    </unmarshal>
+    <to uri="bean:validateOrder"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: file:inbox/xml
+      steps:
+        - unmarshal:
+            allowNullBody: "true"
+            jaxb:
+              contextPath: com.acme.order
+        - to:
+            uri: bean:validateOrder
+----
+====

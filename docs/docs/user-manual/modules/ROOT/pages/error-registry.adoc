@@ -1,0 +1,83 @@
+= Error Registry
+
+The `ErrorRegistry` SPI captures snapshots of exceptions that occur during message routing,
+including the exception, exchange data (headers, body, properties, variables), and message history.
+
+When enabled, the registry stores rich error snapshots that can be browsed globally or scoped to a specific route.
+The exchange data is captured as a detached snapshot at the time of the error, so the original exchange
+can be safely garbage collected after routing completes.
+
+== Enabling
+
+The error registry is disabled by default (opt-in). It can be enabled via Java:
+
+[source,java]
+----
+context.getErrorRegistry().setEnabled(true);
+----
+
+Or via configuration properties:
+
+[source,properties]
+----
+camel.errorRegistry.enabled = true
+----
+
+== Configuration
+
+[width="100%",cols="3,1,1,5",options="header"]
+|===
+| Option | Default | Type | Description
+| `camel.errorRegistry.enabled` | `false` | boolean | Whether the error registry is enabled.
+| `camel.errorRegistry.maximumEntries` | `100` | int | Maximum number of error entries to keep. When exceeded, the oldest entries are evicted.
+| `camel.errorRegistry.timeToLiveSeconds` | `0` | int | Time-to-live for error entries in seconds. Entries older than this are evicted. The default value is 0 (disabled).
+| `camel.errorRegistry.bodyMaxChars` | `32768` | int | Maximum number of characters for the message body in the snapshot.
+| `camel.errorRegistry.bodyIncludeStreams` | `false` | boolean | Whether to include stream-based message bodies.
+| `camel.errorRegistry.bodyIncludeFiles` | `true` | boolean | Whether to include file-based message bodies.
+| `camel.errorRegistry.includeExchangeProperties` | `true` | boolean | Whether to include exchange properties in the snapshot.
+| `camel.errorRegistry.includeExchangeVariables` | `true` | boolean | Whether to include exchange variables in the snapshot.
+| `camel.errorRegistry.includeRouteStopping` | `false` | boolean | Whether to also capture an exchange cut off by a route stop, a route reload or a CamelContext stop (`RouteStoppingException`). Nothing in the route failed, but a consumer that does not roll back may lose the message, so enable it to see how often stops cut off work.
+|===
+
+== Captured Data
+
+Each error entry captures:
+
+- *Exchange ID* — the unique exchange identifier
+- *Route ID* — the route where the error occurred (which may differ from the from-route if the exchange was routed across multiple routes)
+- *From Route ID* — the originating route where the exchange was created (the consumer route)
+- *Route Group* — the group of the route where the error occurred (if set)
+- *Node ID* — the EIP processor node where processing failed
+- *Location* — the source file location of the failing node (e.g. "MyRoute.java:42"), requires source location to be enabled
+- *Endpoint URI* — the producer endpoint the exchange was being sent to when the failure occurred. This can be null when the error occurs before any send attempt (e.g. a direct `throwException` in the route). This does _not_ refer to the route's consumer (from) endpoint.
+- *Timestamp* — when the error occurred (milliseconds since epoch)
+- *Exception* — the full exception instance including type, message, and stack trace
+- *Handled* — whether the error was handled by an error handler (e.g. dead letter channel, onException) or is unhandled
+- *Message data* — a detached JSON snapshot of the exchange message (body, headers, and optionally properties and variables)
+- *Message history* — the trace of every node the message was routed through up until the failure point (requires message history to be enabled)
+- *Processing thread* — the name of the thread that was processing the exchange at the time of the error
+
+== Message History
+
+When xref:components:eips:message-history.adoc[Message History] is enabled on the `CamelContext`, the error registry
+also captures the message history trace for each error. This shows every node the message was
+routed through up until the point of failure, which is very useful for debugging.
+
+== Dev Console
+
+A dev console named `errors` is available for browsing captured errors.
+
+Options:
+
+* `routeId` — filter by route id
+* `limit` — limit the number of entries displayed
+* `stackTrace` — set to `true` to include stack traces in the output (stack traces are captured by default but not displayed unless this option is set, to keep the output concise)
+
+== JMX
+
+A JMX MBean (`ManagedErrorRegistry`) is registered when JMX is enabled, providing operations to:
+
+* Enable/disable the error registry
+* Browse error entries (globally or by route)
+* Configure maximum entries, time-to-live, and capture options
+* Clear all entries

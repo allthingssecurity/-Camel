@@ -1,0 +1,8 @@
+commit aa63c0a4cb94
+repo apache/camel origin/main, fetched 2026-10-25 (same commit as rocq-jvm-threads/theories/Ship/SimpleSpec.v)
+docs docs/ is `git archive` of this commit: docs/user-manual/modules/ROOT/pages, core/camel-core-languages/src/main/docs,
+     core/camel-core-engine/src/main/docs (EIPs), and a few camel-api interfaces whose javadoc is cited (images dropped).
+code harness/build-camel.sh compiles camel-api, -util, -support, -base, -base-engine, -core-processor, -core-reifier,
+     -core-model, -core-languages, -core-engine, -management-api, -xml-jaxp-util, -cluster, -health at this commit;
+     camel-util-json and third-party deps from the local 4.24.0-SNAPSHOT jars (~/.m2).
+jvm  HotSpot 21 (~/homebrew/opt/openjdk@21)

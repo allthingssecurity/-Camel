@@ -1,0 +1,399 @@
+= Poll Enrich EIP
+:doctitle: Poll Enrich
+:shortname: pollEnrich
+:description: Enriches the message with additional data obtained by polling a consumer endpoint (such as a file or message queue). The polled data is merged using an aggregation strategy.
+:since: 
+:supportlevel: Stable
+:tabs-sync-option:
+
+Camel supports the
+http://www.enterpriseintegrationpatterns.com/DataEnricher.html[Content
+Enricher] from the xref:enterprise-integration-patterns.adoc[EIP
+patterns].
+
+image::eip/DataEnricher.gif[image]
+
+In Camel the Content Enricher can be done in several ways:
+
+* Using xref:enrich-eip.adoc[Enrich] EIP, xref:pollEnrich-eip.adoc[Poll Enrich], or xref:poll-eip.adoc[Poll] EIP
+* Using a xref:message-translator.adoc[Message Translator]
+* Using a xref:manual::processor.adoc[Processor] with the enrichment programmed in Java
+* Using a xref:bean-eip.adoc[Bean] EIP with the enrichment programmed in Java
+
+The most natural Camel approach is using xref:enrich-eip.adoc[Enrich] EIP,
+which comes as two kinds:
+
+* xref:enrich-eip.adoc[Enrich] EIP: This is the most common content enricher that uses a `Producer` to obtain the data.
+It is usually used for xref:requestReply-eip.adoc[Request Reply] messaging, for instance, to invoke an external web service.
+
+* xref:pollEnrich-eip.adoc[Poll Enrich] EIP: Uses a xref:polling-consumer.adoc[Polling
+Consumer] to obtain the additional data. It is usually used for
+xref:event-message.adoc[Event Message] messaging, for instance, to read a
+file or download a file using xref:ROOT:ftp-component.adoc[FTP].
+
+NOTE: This page documents the Poll Enrich EIP.
+
+== Options
+
+// eip options: START
+include::partial$eip-options.adoc[]
+// eip options: END
+
+== Exchange properties
+
+// eip exchangeProperties: START
+include::partial$eip-exchangeProperties.adoc[]
+// eip exchangeProperties: END
+
+== Content enrichment using Poll Enrich EIP
+
+`pollEnrich` uses a xref:polling-consumer.adoc[Polling Consumer] to obtain the additional data.
+It is usually used for xref:event-message.adoc[Event Message] messaging,
+for instance, to read a file or download a file using FTP.
+
+The `pollEnrich` works just the same as `enrich`,
+however, as it uses a xref:polling-consumer.adoc[Polling Consumer], we have three methods when polling:
+
+* `receive`: Waits until a message is available and then returns it. *Warning* that this method could block indefinitely if no messages are available.
+* `receiveNoWait`: Attempts to receive a message exchange immediately without waiting and returning `null` if a message exchange is not available yet.
+* `receive(timeout)`: Attempts to receive a message exchange, waiting up to the given timeout to expire if a message is not yet available. Returns the message or `null` if the timeout expired.
+
+=== Poll Enrich with timeout
+
+It is good practice to use timeout value.
+
+By default, Camel will use the `receive` which may block until there is a message available.
+It is therefore recommended to always provide a timeout value,
+to make this clear that we may wait for a message until the timeout is hit.
+
+You can pass in a timeout value that determines which method to use:
+
+* if timeout is `-1` or other negative number then `receive` is selected (*Important:* the `receive` method may block if there is no message)
+* if timeout is `0` then `receiveNoWait` is selected
+* otherwise, `receive(timeout)` is selected
+
+The timeout values are in milliseconds.
+
+For example, to read the file `data.txt` from the inbox directory, waiting up to 10 seconds for it. Without an
+`AggregationStrategy`, the polled message is the result, so the content of the file becomes the message body:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+from("direct:start")
+  .pollEnrich("file:inbox?fileName=data.txt", 10000)
+  .to("mock:result");
+----
+
+XML::
++
+[source,xml]
+----
+<route>
+  <from uri="direct:start"/>
+  <pollEnrich timeout="10000">
+    <constant>file:inbox?fileName=data.txt</constant>
+  </pollEnrich>
+  <to uri="mock:result"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: direct:start
+      steps:
+        - pollEnrich:
+            timeout: 10000
+            expression:
+              constant:
+                expression: file:inbox?fileName=data.txt
+        - to:
+            uri: mock:result
+----
+====
+
+=== Poll Enrich with Dynamic Endpoints
+
+Both `enrich` and `pollEnrich` supports using dynamic uris computed based on information from the current `Exchange`.
+
+For example, the body is an order as a Map, and the route reads the file of its customer into the variable `customer`,
+so the order stays the body:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+from("direct:order")
+  .pollEnrich().simple("file:customers?fileName=${body[customer]}.json&noop=true")
+    .timeout(5000).variableReceive("customer")
+  .log("Order ${body[orderId]} for customer ${variable.customer}");
+----
+
+XML::
++
+[source,xml]
+----
+<route>
+  <from uri="direct:order"/>
+  <pollEnrich timeout="5000" variableReceive="customer">
+    <simple>file:customers?fileName=${body[customer]}.json&amp;noop=true</simple>
+  </pollEnrich>
+  <log message="Order ${body[orderId]} for customer ${variable.customer}"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: direct:order
+      steps:
+        - pollEnrich:
+            expression:
+              simple:
+                expression: "file:customers?fileName=${body[customer]}.json&noop=true"
+            timeout: 5000
+            variableReceive: customer
+        - log:
+            message: "Order ${body[orderId]} for customer ${variable.customer}"
+----
+====
+
+`noop=true` leaves the customer file where it is: without it, the file is moved into `customers/.camel` once it was
+read, and the next order of the same customer finds no file. When no file is found within the timeout, the variable is
+`null`. The variable holds the content of the file as text: to read its fields, unmarshal it, such as `unmarshal` with
+`json` and both `variableSend` and `variableReceive` set to `customer`, and then `${variable.customer[name]}`.
+
+Or to `pollEnrich` from an endpoint that uses a header to indicate a SEDA queue name:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+from("direct:start")
+  .pollEnrich().simple("seda:${header.queueName}")
+  .to("direct:result");
+----
+
+XML::
++
+[source,xml]
+----
+<route>
+  <from uri="direct:start"/>
+  <pollEnrich>
+    <simple>seda:${header.queueName}</simple>
+  </pollEnrich>
+  <to uri="direct:result"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: direct:start
+      steps:
+        - pollEnrich:
+            expression:
+              simple:
+                expression: "seda:${header.queueName}"
+        - to:
+            uri: direct:result
+----
+====
+
+TIP: See the `cacheSize` option for more details on _how much cache_ to use depending on how many or few unique endpoints are used.
+
+=== Using Poll Enrich
+
+The content enricher (`pollEnrich`) retrieves additional data from a _resource endpoint_ in order to enrich an incoming message (contained in the _original exchange_).
+
+An `AggregationStrategy` is used to combine the original exchange and the _resource exchange_. The first parameter of the `AggregationStrategy.aggregate(Exchange, Exchange)` method corresponds to the original exchange, the second parameter the resource exchange.
+
+Here's an example for implementing an `AggregationStrategy`, which merges the two data together
+as a `String` with colon separator:
+
+[source,java]
+----
+public class ExampleAggregationStrategy implements AggregationStrategy {
+
+    public Exchange aggregate(Exchange original, Exchange resource) {
+        // this is just an example, for real-world use-cases the
+        // aggregation strategy would be specific to the use-case
+
+        if (resource == null) {
+            return original;
+        }
+        Object oldBody = original.getIn().getBody();
+        Object newBody = resource.getIn().getBody();
+        original.getIn().setBody(oldBody + ":" + newBody);
+        return original;
+    }
+
+}
+----
+
+You then use the `AggregationStrategy` with the `pollEnrich` in the following example,
+where Camel will poll a file (timeout 10 seconds). The `AggregationStrategy` is then used to merge the file with the existing `Exchange`.
+
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+AggregationStrategy aggregationStrategy = ...
+
+from("direct:start")
+  .pollEnrich("file:inbox?fileName=data.txt", 10000, aggregationStrategy)
+  .to("mock:result");
+----
+
+XML::
++
+[source,xml]
+----
+<bean id="myStrategy" class="com.foo.ExampleAggregationStrategy"/>
+
+<route>
+  <from uri="direct:start"/>
+  <pollEnrich timeout="10000" aggregationStrategy="myStrategy">
+    <constant>file:inbox?fileName=data.txt</constant>
+  </pollEnrich>
+  <to uri="mock:result"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: direct:start
+      steps:
+        - pollEnrich:
+            aggregationStrategy: myStrategy
+            timeout: 10000
+            expression:
+              constant:
+                expression: file:inbox?fileName=data.txt
+        - to:
+            uri: mock:result
+----
+====
+
+
+=== Using Poll Enrich with Rest DSL
+
+You can also use `pollEnrich` with xref:manual::rest-dsl.adoc[Rest DSL] to,
+for example, download a file from xref:ROOT:aws2-s3-component.adoc[AWS S3] as the response of an API call.
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+rest("/report")
+  .get("/{id}/report")
+    .to("direct:report");
+
+from("direct:report")
+  .pollEnrich("aws-s3:xavier-dev?amazonS3Client=#s3client&amp;deleteAfterRead=false&amp;fileName=report-file.pdf");
+----
+
+XML::
++
+[source,xml]
+----
+<rest path="/report">
+    <get path="/{id}/report">
+      <to uri="direct:report"/>
+    </get>
+</rest>
+
+<route>
+  <from uri="direct:report"/>
+    <pollEnrich>
+        <constant>aws-s3:xavier-dev?amazonS3Client=#s3client&amp;deleteAfterRead=false&amp;fileName=report-file.pdf</constant>
+    </pollEnrich>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- rest:
+    path: /report
+    get:
+      - path: /{id}/report
+        to:
+          uri: direct:report
+
+- route:
+    from:
+      uri: direct:report
+      steps:
+        - pollEnrich:
+            expression:
+              constant:
+                expression: "aws-s3:xavier-dev?amazonS3Client=#s3client&deleteAfterRead=false&fileName=report-file.pdf"
+----
+====
+
+Notice that the enriched endpoint is a constant, however, Camel also supports dynamic endpoints which is covered next.
+
+=== Using Poll Enrich with file based components
+
+When using `poll` or `pollEnrich` with the file based components, then the `eagerLimitMaxMessagesPerPoll` option
+has changed default from `false` to `true` from **Camel 4.13** onwards. Only use-cases where you need to sort the files first,
+requires to explicit set the option `eagerLimitMaxMessagesPerPoll=false` to make Camel scan for all files first before sorting,
+and then `poll` or `pollEnrich` will then pick the top file after the sorting.
+
+This improves performance for use-cases without need for sorting first.
+
+==== The file name of a dynamic uri
+
+With the file based components (file, ftp, ftps, sftp, smb and azure-files), Camel reuses one endpoint for every
+message, and the consumer evaluates the `fileName` option when it looks for the file:
+
+* A `fileName` that uses the file functions, such as `${file:onlyname.noext}` or `${date:file:yyyyMMdd}`, is evaluated
+  for each file found, as these functions read that file.
+* Any other `fileName` is evaluated on the message being enriched: its body, headers, variables and exchange
+  properties.
+
+The example of the customer file in <<_poll_enrich_with_dynamic_endpoints,Poll Enrich with Dynamic Endpoints>> uses a
+field of the body, `${body[customer]}`, in its `fileName`.
+
+NOTE: Before Camel 4.24, `+${body}+` in the `fileName` was the file found, not the message being enriched, and only the
+headers, variables and exchange properties of the message could be used. With an older version, put the value in a
+header or a variable first.
+
+To evaluate the whole uri on the message instead, with an endpoint for each file name, set `allowOptimisedComponents` to
+`false`.
+
+== See More
+
+- xref:poll-eip.adoc[Poll EIP]
+- xref:enrich-eip.adoc[Enrich EIP]

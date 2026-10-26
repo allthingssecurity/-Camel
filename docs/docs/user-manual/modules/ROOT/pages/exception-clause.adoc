@@ -1,0 +1,282 @@
+= Exception Clause
+
+You can use the _Exception Clause_ in the Java xref:dsl.adoc[DSL] to
+specify the error handling you require on a per exception type basis
+using the *`onException()`* method. To get started we give quick sample
+before digging into how it works.
+
+For example if you want to perform a specific piece of processing if a
+certain exception is raised you can do this simply via:
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+onException(ValidationException.class)
+    .to("activemq:validationFailed");
+
+from("seda:inputA")
+    .to("validation:foo/bar.xsd", "activemq:someQueue");
+
+from("seda:inputB")
+    .to("direct:foo")
+    .to("rnc:mySchema.rnc", "activemq:anotherQueue");
+----
+
+XML::
++
+[source,xml]
+----
+<onException>
+    <exception>org.apache.camel.ValidationException</exception>
+    <to uri="activemq:validationFailed"/>
+</onException>
+
+<route>
+    <from uri="seda:inputA"/>
+    <to uri="validation:foo/bar.xsd"/>
+    <to uri="activemq:someQueue"/>
+</route>
+
+<route>
+    <from uri="seda:inputB"/>
+    <to uri="direct:foo"/>
+    <to uri="rnc:mySchema.rnc"/>
+    <to uri="activemq:anotherQueue"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- onException:
+    exception:
+      - org.apache.camel.ValidationException
+    steps:
+      - to:
+          uri: activemq:validationFailed
+- route:
+    from:
+      uri: seda:inputA
+      steps:
+        - to:
+            uri: validation:foo/bar.xsd
+        - to:
+            uri: activemq:someQueue
+- route:
+    from:
+      uri: seda:inputB
+      steps:
+        - to:
+            uri: direct:foo
+        - to:
+            uri: rnc:mySchema.rnc
+        - to:
+            uri: activemq:anotherQueue
+----
+====
+
+Here if the processing of *`seda:inputA`* or *`seda:inputB`* cause
+a *`ValidationException`* to be thrown (such as due to the XSD
+validation of the xref:components::validator-component.adoc[Validation] component),
+then the message will be sent to the
+*`activemq:validationFailed`* queue.
+
+You can define multiple *`onException`* clauses for different behavior:
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+onException(ValidationException.class)
+    .to("activemq:validationFailed");
+
+onException(com.foo.ShipOrderException.class)
+    .to("activemq:shipFailed");
+
+from("seda:order")
+    .to("bean:processOrder");
+----
+
+XML::
++
+[source,xml]
+----
+<onException>
+    <exception>org.apache.camel.ValidationException</exception>
+    <to uri="activemq:validationFailed"/>
+</onException>
+<onException>
+    <exception>com.foo.ShipOrderException</exception>
+    <to uri="activemq:shipFailed"/>
+</onException>
+
+<route>
+    <from uri="seda:order"/>
+    <to uri="bean:processOrder"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- onException:
+    exception:
+      - org.apache.camel.ValidationException
+    steps:
+      - to:
+          uri: activemq:validationFailed
+- onException:
+    exception:
+      - com.foo.ShipOrderException
+    steps:
+      - to:
+          uri: activemq:shipFailed
+- route:
+    from:
+      uri: seda:order
+      steps:
+        - to:
+            uri: bean:processOrder
+----
+====
+
+== Scopes
+
+Exception clauses is scoped as either:
+
+* global (for Java DSL that is per *`RouteBuilder`* instances, to reuse,
+see note below)
+* or route specific
+
+Where the *global* are the simplest and most easy to understand. In the
+advanced section we dig into the route specific and even combining them.
+However
+
+Global scope for Java DSL is per *`RouteBuilder`* instance, so if you
+want to share among multiple *`RouteBuilder`* classes, then create a
+base abstract *`RouteBuilder`* class and put the error handling logic in
+its *`configure`* method. And then extend this class, and make sure to
+class *`super.configure()`*. We are just using the Java inheritance
+technique.
+
+== How Does Camel Select Which Clause Should Handle a Given Thrown Exception?
+
+Camel uses *`DefaultExceptionPolicyStrategy`* to determine a strategy
+how an exception being thrown should be handled by which *`onException`*
+clause. The strategy is:
+
+* Camel tests the thrown exception, and each of its causes (the nested
+caused by exceptions), against the exceptions of all the *`onException`*
+clauses.
+* *`instanceof`* test is used for testing the given exception with the
+*`onException`* clause defined exception list. An exact match is
+preferred, otherwise the *`onException`* clause that has an exception
+that is the closest super class of the thrown exception is selected
+(recurring up the exception hierarchy).
+* The *closest* match wins, across the thrown exception and all its causes.
+For example, an exact match on the thrown (wrapper) exception wins over a
+super class match on a nested cause. When two clauses are equally close,
+the match on the most nested cause (bottom) wins.
+* When an *`onException`* in a route and an *`onException`* in the
+`RouteBuilder` (context scoped) are equally close, then the one in the
+route wins.
+* An *`onException`* with an `onWhen` predicate only matches when the
+predicate is `true`.
+* If the same exception is configured in more than one *`onException`*
+(in the same scope, without `onWhen`), then the *last* one configured is
+used. The *`onException`* from route configurations are added after the
+ones in the `RouteBuilder`, and are therefore used instead.
+
+This is best illustrated with an exception:
+
+._Java-only: exception policy selection order_
+[source,java]
+----
+onException(IOException.class)
+    .maximumRedeliveries(3);
+
+onException(OrderFailedException.class)
+    .maximumRedeliveries(2);
+----
+
+In the sample above we have defined two exceptions, and Camel selects the
+*`onException`* that is the closest match of the thrown exception (or one of
+its causes).
+
+So if an exception is thrown with this hierarchy:
+
+....
++ RuntimeCamelException (wrapper exception by Camel)
+    + OrderFailedException
+        + IOException
+            + FileNotFoundException
+....
+
+Then Camel will try testing the exception in this order:
+*`FileNotFoundException`*, *`IOException`*, *`OrderFailedException`* and
+*`RuntimeCamelException`*.
+As we have defined a *`onException(IOException.class)`* Camel will
+select this as it's the *closest* match.
+
+If we add a third *`onException`* clause with the
+*`FileNotFoundException`*
+
+._Java-only: adding a more specific exception clause_
+[source,java]
+----
+onException(IOException.class)
+    .maximumRedeliveries(3);
+
+onException(OrderFailedException.class)
+    .maximumRedeliveries(2);
+
+onException(FileNotFoundException.class)
+    .handled(true)
+    .to("log:nofile");
+----
+
+Then with the previous example Camel will now use the last
+*`onException(FileNotFoundException.class)`* as its an *exact* match.
+Since this is an exact match it will override the
+general *`IOException`* that was used before to handle the same
+exception thrown.
+
+Now a new situation if this exception was thrown instead:
+
+....
++ RuntimeCamelException (wrapper exception by Camel)
+    + OrderFailedException
+        + OrderNotFoundException
+....
+
+Then the *`onException(OrderFailedException.class)`* will be selected -
+no surprise here.
+
+And this last sample demonstrates the *`instanceof`* test aspect in
+which Camel will select an exception if it's an instance of the defined
+exception in the *`onException`* clause. Illustrated as:
+
+....
++ RuntimeCamelException (wrapper exception by Camel)
+    + SocketException
+....
+
+Since *`SocketException`* is an *`instanceof IOException`*, Camel will
+select the *`onException(IOException.class)`* clause.
+
+== More Information
+
+For detailed documentation on specific topics, see the following sub-pages:
+
+* xref:exception-redelivery.adoc[Redelivery] — Configuring redelivery policy, async delayed redelivery, catching multiple exceptions
+* xref:exception-handling-patterns.adoc[Handling Patterns] — Handled vs continued, using original message, custom failure handlers
+* xref:exception-advanced.adoc[Advanced Usage] — Global vs route-specific, onWhen predicate, onRedelivery processor, custom strategies

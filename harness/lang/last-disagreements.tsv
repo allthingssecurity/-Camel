@@ -1,0 +1,48 @@
+# 303	doc-bug? key with spaces {{ k }} [PP.582]
+619	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%5C%7B%7B%20	S%7B%7B%20	ph-exh	EIllegalArgumentException	Missing {{ from the text: \{{ }}
+1392	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%7B%7Ba%20%7D%7D	S1	ph-exh	EIllegalArgumentException	Property with key [a ] not found in properties from text: {{a }}
+1492	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%7B%7Bb%20%7D%7D	S1	ph-exh	EIllegalArgumentException	Property with key [b ] not found in properties from text: {{b }}
+1932	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%7B%7B%20a%7D%7D	S1	ph-exh	EIllegalArgumentException	Property with key [ a] not found in properties from text: {{ a}}
+1942	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%7B%7B%20b%7D%7D	S1	ph-exh	EIllegalArgumentException	Property with key [ b] not found in properties from text: {{ b}}
+# 293	code-bug? escape: kept when no {{
+62	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%5C%7D%7D	S%7D%7D	ph-exh	S%5C%7D%7D	
+362	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	a%5C%7D%7D	Sa%7D%7D	ph-exh	Sa%5C%7D%7D	
+462	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	b%5C%7D%7D	Sb%7D%7D	ph-exh	Sb%5C%7D%7D	
+562	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%3A%5C%7D%7D	S%3A%7D%7D	ph-exh	S%3A%5C%7D%7D	
+623	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%5C%7D%7Da	S%7D%7Da	ph-exh	S%5C%7D%7Da	
+# 237	code-bug? tokenize: token is a regex
+37902	E	lang=tokenize;token=%2E	body=Sa%2Eb%7Cc%2Bd%5Be%2Af	A2.a,b%7Cc%2Bd%5Be%2Af	tok-meta	A10.,,,,,,,,,	
+37906	E	lang=tokenize;token=%2E	body=Sp%2Bq	A1.p%2Bq	tok-meta	A2.,	
+37908	E	lang=tokenize;token=%2E	body=Sabc	A1.abc	tok-meta	A2.,	
+37910	E	lang=tokenize;token=%7C	body=Sa%2Eb%7Cc%2Bd%5Be%2Af	A2.a%2Eb,c%2Bd%5Be%2Af	tok-meta	A11.a,%2E,b,%7C,c,%2B,d,%5B,e,%2A,f	
+37912	E	lang=tokenize;token=%7C	body=Sx%2E%2Ey	A1.x%2E%2Ey	tok-meta	A4.x,%2E,%2E,y	
+# 235	code-bug? escape: lone \{{ fails
+61	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%5C%7B%7B	S%7B%7B	ph-exh	EIllegalArgumentException	Missing {{ from the text: \{{}}
+361	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	a%5C%7B%7B	Sa%7B%7B	ph-exh	EIllegalArgumentException	Missing {{ from the text: a\{{}}
+461	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	b%5C%7B%7B	Sb%7B%7B	ph-exh	EIllegalArgumentException	Missing {{ from the text: b\{{}}
+561	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%3A%5C%7B%7B	S%3A%7B%7B	ph-exh	EIllegalArgumentException	Missing {{ from the text: :\{{}}
+613	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%5C%7B%7Ba	S%7B%7Ba	ph-exh	EIllegalArgumentException	Missing {{ from the text: \{{a}}
+# 46	code-bug? negation not leading
+618	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%5C%7B%7B%21	S%7B%7B%21	ph-exh	EIllegalArgumentException	Missing {{ from the text: \{{!}}
+3618	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	a%5C%7B%7B%21	Sa%7B%7B%21	ph-exh	EIllegalArgumentException	Missing {{ from the text: a\{{!}}
+4618	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	b%5C%7B%7B%21	Sb%7B%7B%21	ph-exh	EIllegalArgumentException	Missing {{ from the text: b\{{!}}
+5618	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%3A%5C%7B%7B%21	S%3A%7B%7B%21	ph-exh	EIllegalArgumentException	Missing {{ from the text: :\{{!}}
+6183	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%5C%7B%7B%21a	S%7B%7B%21a	ph-exh	EIllegalArgumentException	Missing {{ from the text: \{{!a}}
+# 13	code-bug? escape: other (\{{x\ -> {{x}})
+616	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%5C%7B%7B%5C	S%7B%7B%5C	ph-exh	S%7B%7B%7D%7D	
+3616	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	a%5C%7B%7B%5C	Sa%7B%7B%5C	ph-exh	Sa%7B%7B%7D%7D	
+4616	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	b%5C%7B%7B%5C	Sb%7B%7B%5C	ph-exh	Sb%7B%7B%7D%7D	
+5616	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%3A%5C%7B%7B%5C	S%3A%7B%7B%5C	ph-exh	S%3A%7B%7B%7D%7D	
+6136	PH	i.a=1;i.b=%7B%7Ba%7D%7D;i.x=	%5C%7B%7Ba%5C	S%7B%7Ba%5C	ph-exh	S%7B%7Ba%7D%7D	
+# 9	code-bug? escape: backslash lost (nested=false)
+14140	PH	s.p%2Eq=sysv;i.a=%7B%7Bb%7D%7D;i.b=%7B%7Bc%7D%7D;i.c=v;nested=0	%5C%5C%7B%7Ba%7D%7D	S%5C%7B%7Bb%7D%7D	ph-nested	S%7B%7Bb%7D%7D	
+14182	PH	s.p%2Eq=sysv;i.a=%7B%7Ba%7D%7D;nested=0	%5C%5C%7B%7Ba%7D%7D	S%5C%7B%7Ba%7D%7D	ph-nested	S%7B%7Ba%7D%7D	
+14224	PH	s.p%2Eq=sysv;i.a=%7B%7Bb%7D%7D;i.b=%7B%7Ba%7D%7D;nested=0	%5C%5C%7B%7Ba%7D%7D	S%5C%7B%7Bb%7D%7D	ph-nested	S%7B%7Bb%7D%7D	
+14350	PH	s.p%2Eq=sysv;i.a=%7B%7Bb%7D%7D;i.b=%5C%7B%7Bc%5C%7D%7D;nested=0	%5C%5C%7B%7Ba%7D%7D	S%5C%7B%7Bb%7D%7D	ph-nested	S%7B%7Bb%7D%7D	
+14518	PH	s.p%2Eq=sysv;i.a=%7B%7Bb%7D%7D%2D%7B%7Bb%7D%7D;i.b=B;nested=0	%5C%5C%7B%7Ba%7D%7D	S%5C%7B%7Bb%7D%7D%2D%7B%7Bb%7D%7D	ph-nested	S%7B%7Bb%7D%7D%2D%7B%7Bb%7D%7D	
+# 2	code-bug? tokenize: pair mode white-space start token
+37966	E	lang=tokenize;token=%0A;end=%3B	body=Sx%0Aa%3B%0Ab%3B	A2.a,b	tok-token	EIllegalArgumentException	startToken must be specified and not empty
+37967	E	lang=tokenize;token=%0A;end=%3B;incl=1	body=Sx%0Aa%3B%0Ab%3B	A2.%0Aa%3B,%0Ab%3B	tok-token	EIllegalArgumentException	startToken must be specified and not empty
+# 2	code-bug? tokenize: pair mode null body
+38083	E	lang=tokenize;token=a;end=b	body=N;h.h=N;p.p=N;p.pp=N;v.v=N	A0.	tok-src	EInvalidPayloadException	No body available of type: java.io.InputStream on: Message. Exchange[]
+38085	E	lang=tokenize;token=a;end=b;source=	body=N;h.h=N;p.p=N;p.pp=N;v.v=N	A0.	tok-src	EInvalidPayloadException	No body available of type: java.io.InputStream on: Message. Exchange[]

@@ -1,0 +1,27 @@
+family	agree	mismatch	unspecified
+const	58	0	146
+lang-rand	784	212	4004
+names	3400	0	2648
+ph-exh	4745	392	5973
+ph-fn	79	3	47
+ph-forms	1172	104	1604
+ph-nested	226	48	356
+ph-rand	2780	352	1868
+ref	14	0	38
+tok-exh	1540	0	5012
+tok-meta	5	25	34
+tok-misc	1	0	4
+tok-pairs	1611	0	6579
+tok-src	72	2	66
+tok-token	14	2	40
+var	30	0	36
+TOTAL	16531	1140	28455
+   303  doc-bug? key with spaces {{ k }} [PP.582]
+   293  code-bug? escape: kept when no {{
+   237  code-bug? tokenize: token is a regex
+   235  code-bug? escape: lone \{{ fails
+    46  code-bug? negation not leading
+    13  code-bug? escape: other (\{{x\ -> {{x}})
+     9  code-bug? escape: backslash lost (nested=false)
+     2  code-bug? tokenize: pair mode white-space start token
+     2  code-bug? tokenize: pair mode null body

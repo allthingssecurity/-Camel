@@ -1,0 +1,45 @@
+= Camel CLI - Container Image
+
+The Camel CLI is available as a container image on https://hub.docker.com/r/apache/camel-jbang/[Docker Hub],
+with `camel` as its entrypoint. Use it to run Camel integrations without installing Java, Maven or the Camel CLI
+on your machine, for example in CI.
+
+NOTE: All examples use `docker`. Replace it with `podman` if you prefer -- the commands are identical.
+The examples use the 4.22.0 release; use the tag of the release you want.
+
+== Verify the version
+
+[source,bash]
+----
+$ docker run apache/camel-jbang:4.22.0 version
+Camel CLI version: 4.22.0
+----
+
+== Running a route
+
+Mount your route files into the container and run them. For example, given a route in `test.yaml`
+(created with `camel init test.yaml`):
+
+[source,bash]
+----
+docker run -v .:/integrations apache/camel-jbang:4.22.0 run /integrations/test.yaml
+----
+
+All the options of `camel run` work the same way, for example a different runtime:
+
+[source,bash]
+----
+docker run -w /home/ubuntu -v $PWD/test.yaml:/tmp/test.yaml apache/camel-jbang:4.22.0 run /tmp/test.yaml --runtime quarkus
+----
+
+== Any other `camel` command
+
+Any other command of the Camel CLI runs the same way: put it after the image name, such as
+`docker run apache/camel-jbang:4.22.0 catalog component`.
+
+== Image tags
+
+The image is published with tags for different Camel versions, Java versions and platform architectures.
+Docker pulls the variant for your platform when a multi-architecture image is available.
+The available variants change over time; check the https://hub.docker.com/r/apache/camel-jbang/tags[tags on Docker Hub]
+before choosing one.

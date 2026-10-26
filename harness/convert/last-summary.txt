@@ -1,0 +1,77 @@
+camel   cases 6279
+  MISMATCH 5
+  OK 2667
+  PMISMATCH 14
+  POK 3589
+  UNS 4
+Outcomes by UNSPECIFIED / partial reason:
+  EXJ: getProperty of a value whose converter fails: null or TypeConversionException -> {Xorg.apache.camel.TypeConversionException=72}
+  MODEL: Double from a decimal text that is not a whole number of quarters -> {Ojava.lang.Double=28}
+  MODEL: Number from a decimal text that is not a whole number of quarters -> {Ojava.lang.Double=14}
+  MSGJ: getBody of a body that cannot be converted: null or TypeConversionException -> {Xorg.apache.camel.TypeConversionException=72}
+  MSGJ: getBody of a null body as a primitive: null (MSGJ.296) or zero (UG424.2458) -> {VB*=1, VD*=1, VI*=1, VL*=1}
+  MSGJ: getHeader of a value that cannot be converted: null or TypeConversionException -> {Xorg.apache.camel.TypeConversionException=72}
+  TC: Boolean from a List -> {NULL=30, Xorg.apache.camel.InvalidPayloadException=10, Xorg.apache.camel.NoTypeConversionAvailableException=5, Xorg.apache.camel.TypeConversionException=25}
+  TC: Boolean from a number -> {NULL=78, VB*=84, Xorg.apache.camel.InvalidPayloadException=26, Xorg.apache.camel.NoTypeConversionAvailableException=13, Xorg.apache.camel.TypeConversionException=65}
+  TC: Boolean from text other than true/false -> {NULL=228, VB*=28, Xorg.apache.camel.InvalidPayloadException=76, Xorg.apache.camel.NoTypeConversionAvailableException=38, Xorg.apache.camel.TypeConversionException=190}
+  TC: Double from a Boolean -> {NULL=20, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.NoTypeConversionAvailableException=4}
+  TC: Double from a List -> {NULL=50, Xorg.apache.camel.InvalidPayloadException=10, Xorg.apache.camel.NoTypeConversionAvailableException=10}
+  TC: Double from a decimal text that a Double does not hold exactly -> {VD*=42}
+  TC: Double from a long beyond 2^53 -> {VD*=42}
+  TC: Double from empty or blank text -> {NULL=4, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.TypeConversionException=20}
+  TC: Double from exponent text -> {VD*=56}
+  TC: Double from hex-like text -> {NULL=2, Xorg.apache.camel.InvalidPayloadException=2, Xorg.apache.camel.TypeConversionException=10}
+  TC: Double from integer text with leading zeros or -0 -> {Ojava.lang.Double=14, VD*=14}
+  TC: Double from other text -> {NULL=4, Ojava.lang.Double=28, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.TypeConversionException=20}
+  TC: Double from text with a plus sign -> {VD*=14}
+  TC: Double from text with white space -> {VD*=28}
+  TC: Integer from a Boolean -> {NULL=20, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.NoTypeConversionAvailableException=4}
+  TC: Integer from a Double with a fraction or out of range -> {VI*=56}
+  TC: Integer from a List -> {NULL=50, Xorg.apache.camel.InvalidPayloadException=10, Xorg.apache.camel.NoTypeConversionAvailableException=10}
+  TC: Integer from a number out of its range -> {VI*=70}
+  TC: Integer from decimal text -> {NULL=12, Xorg.apache.camel.InvalidPayloadException=12, Xorg.apache.camel.TypeConversionException=60}
+  TC: Integer from empty or blank text -> {NULL=4, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.TypeConversionException=20}
+  TC: Integer from exponent text -> {NULL=8, Xorg.apache.camel.InvalidPayloadException=8, Xorg.apache.camel.TypeConversionException=40}
+  TC: Integer from hex-like text -> {NULL=2, Xorg.apache.camel.InvalidPayloadException=2, Xorg.apache.camel.TypeConversionException=10}
+  TC: Integer from integer text out of its range -> {NULL=10, Xorg.apache.camel.InvalidPayloadException=10, Xorg.apache.camel.TypeConversionException=50}
+  TC: Integer from integer text with leading zeros or -0 -> {VI*=28}
+  TC: Integer from other text -> {NULL=8, Xorg.apache.camel.InvalidPayloadException=8, Xorg.apache.camel.TypeConversionException=40}
+  TC: Integer from text with a plus sign -> {VI*=14}
+  TC: Integer from text with white space -> {NULL=4, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.TypeConversionException=20}
+  TC: List from a value that is not a List -> {NULL=315, Xorg.apache.camel.InvalidPayloadException=63, Xorg.apache.camel.NoTypeConversionAvailableException=63}
+  TC: Long from a Boolean -> {NULL=20, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.NoTypeConversionAvailableException=4}
+  TC: Long from a Double with a fraction or out of range -> {VL*=42}
+  TC: Long from a List -> {NULL=50, Xorg.apache.camel.InvalidPayloadException=10, Xorg.apache.camel.NoTypeConversionAvailableException=10}
+  TC: Long from decimal text -> {NULL=12, Xorg.apache.camel.InvalidPayloadException=12, Xorg.apache.camel.TypeConversionException=60}
+  TC: Long from empty or blank text -> {NULL=4, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.TypeConversionException=20}
+  TC: Long from exponent text -> {NULL=8, Xorg.apache.camel.InvalidPayloadException=8, Xorg.apache.camel.TypeConversionException=40}
+  TC: Long from hex-like text -> {NULL=2, Xorg.apache.camel.InvalidPayloadException=2, Xorg.apache.camel.TypeConversionException=10}
+  TC: Long from integer text out of its range -> {NULL=2, Xorg.apache.camel.InvalidPayloadException=2, Xorg.apache.camel.TypeConversionException=10}
+  TC: Long from integer text with leading zeros or -0 -> {VL*=28}
+  TC: Long from other text -> {NULL=8, Xorg.apache.camel.InvalidPayloadException=8, Xorg.apache.camel.TypeConversionException=40}
+  TC: Long from text with a plus sign -> {VL*=14}
+  TC: Long from text with white space -> {NULL=4, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.TypeConversionException=20}
+  TC: Number from a Boolean -> {NULL=10, Xorg.apache.camel.InvalidPayloadException=2, Xorg.apache.camel.NoTypeConversionAvailableException=2}
+  TC: Number from a List -> {NULL=25, Xorg.apache.camel.InvalidPayloadException=5, Xorg.apache.camel.NoTypeConversionAvailableException=5}
+  TC: String from a Double (its text is not documented) -> {VS*=42}
+  TC: String from a List (its text is not documented) -> {VS*=35}
+  TCJ: convertTo of a value that cannot be converted: null or TypeConversionException -> {Xorg.apache.camel.TypeConversionException=72}
+  TCJ: mandatoryConvertTo of a value that cannot be converted: which exception -> {Xorg.apache.camel.TypeConversionException=72}
+  TCJ: mandatoryConvertTo of null: never null, outcome not documented -> {Xorg.apache.camel.NoTypeConversionAvailableException=9}
+  UG423: BigDecimal from a Boolean -> {NULL=14}
+  UG423: BigDecimal from a List -> {NULL=35}
+  UG423: BigDecimal from empty or blank text -> {NULL=2, Xorg.apache.camel.InvalidPayloadException=2, Xorg.apache.camel.TypeConversionException=10}
+  UG423: BigDecimal from exponent text -> {Z1:-10=7, Z1:-3=7, Z1:-5=14}
+  UG423: BigDecimal from hex-like text -> {NULL=1, Xorg.apache.camel.InvalidPayloadException=1, Xorg.apache.camel.TypeConversionException=5}
+  UG423: BigDecimal from integer text with leading zeros or -0 -> {Z0:0=7, Z7:0=7}
+  UG423: BigDecimal from other text -> {NULL=4, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.TypeConversionException=20}
+  UG423: BigDecimal from text with a plus sign -> {Z1:0=7}
+  UG423: BigDecimal from text with white space -> {NULL=2, Xorg.apache.camel.InvalidPayloadException=2, Xorg.apache.camel.TypeConversionException=10}
+  UG423: Number from empty or blank text -> {NULL=2, Xorg.apache.camel.InvalidPayloadException=2, Xorg.apache.camel.TypeConversionException=10}
+  UG423: Number from exponent text -> {VD*=7}
+  UG423: Number from hex-like text -> {NULL=1, Xorg.apache.camel.InvalidPayloadException=1, Xorg.apache.camel.TypeConversionException=5}
+  UG423: Number from integer text beyond the Long range -> {NULL=1, Xorg.apache.camel.InvalidPayloadException=1, Xorg.apache.camel.TypeConversionException=5}
+  UG423: Number from integer text with leading zeros or -0 -> {VI*=14}
+  UG423: Number from other text -> {NULL=4, Xorg.apache.camel.InvalidPayloadException=4, Xorg.apache.camel.TypeConversionException=20}
+  UG423: Number from text with a plus sign -> {VI*=7}
+  UG423: Number from text with white space -> {NULL=2, Xorg.apache.camel.InvalidPayloadException=2, Xorg.apache.camel.TypeConversionException=10}

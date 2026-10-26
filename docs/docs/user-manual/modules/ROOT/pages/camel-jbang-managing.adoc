@@ -1,0 +1,934 @@
+= Camel CLI - Managing Integrations
+
+Once your Camel integrations are running, the CLI provides comprehensive management and monitoring capabilities — from listing processes and tailing logs to tracing messages and checking health.
+
+TIP: Prefer a visual dashboard over individual commands?
+Just type `camel tui` — the plugin auto-installs on first use.
+It shows routes, messages, health, traces, and more in a single terminal view.
+See xref:camel-jbang-tui.adoc[Camel TUI] for details.
+
+For looking deeper into a misbehaving integration -- captured errors, blocked messages, memory leaks, heap and thread dumps,
+startup timing, SQL and Kafka -- see xref:camel-jbang-diagnostics.adoc[Diagnostics].
+
+== Controlling local Camel integrations
+
+List running integrations with `ps`:
+
+[source,bash]
+----
+camel ps
+  PID   NAME                             READY  STATUS    AGE
+ 61818  sample.camel.MyCamelApplica...   1/1   Running  26m38s
+ 62506  dude                             1/1   Running   4m34s
+----
+
+Stop by name or PID:
+
+[source,bash]
+----
+camel stop dude
+Shutting down Camel integration (PID: 62506)
+----
+
+`camel stop` waits until the integration has stopped, up to `--timeout` (60 seconds by default). When it has not
+stopped in time, it exits with code `124`, and `--kill` stops it at once. Use `--no-wait` to return without waiting.
+
+NOTE: The name is matched as a prefix — `camel stop d` stops all integrations starting with _d_.
+To stop exactly one when names overlap (e.g., `dude` and `dude2`), use the PID or append `!`: `camel stop dude!`.
+A PID must be a running Camel integration, and a name or PID that matches nothing exits with code `3`
+(see xref:camel-jbang-exit-codes.adoc[Exit Codes and Output]).
+
+Restart an integration (stop + re-launch):
+
+[source,bash]
+----
+camel restart dude
+Stopping Camel integration: dude (PID: 62506)
+Restarted Camel integration: dude (PID: 63010)
+Log: ~/.camel/restart-62506-1234.log
+----
+
+`camel restart` waits until the integration has stopped, and until the new one has started, and keeps the output of
+the new integration in the log file it prints. When the new integration stops right away, it prints the end of the log
+and exits with code `1`; when it is still starting after `--timeout`, it exits with code `124` and leaves it running.
+
+Stop all integrations (omit the name):
+
+[source,bash]
+----
+camel stop
+Shutting down Camel integration (PID: 61818)
+Shutting down Camel integration (PID: 62506)
+----
+
+=== Watch mode
+
+Most management commands support `--watch` for continuous full-screen output:
+
+[source,bash]
+----
+camel ps --watch
+  PID   NAME                             READY  STATUS    AGE
+ 61818  sample.camel.MyCamelApplica...   1/1   Running  26m38s
+ 62506  dude                             1/1   Running   4m34s
+----
+
+== Controlling Spring Boot and Quarkus integrations
+
+By default, the CLI only manages integrations started with `camel run`.
+To manage Spring Boot or Quarkus applications, add the CLI connector dependency.
+
+Spring Boot:
+
+[source,xml]
+----
+<dependency>
+    <groupId>org.apache.camel.springboot</groupId>
+    <artifactId>camel-cli-connector-starter</artifactId>
+</dependency>
+----
+
+Quarkus:
+
+[source,xml]
+----
+<dependency>
+    <groupId>org.apache.camel.quarkus</groupId>
+    <artifactId>camel-quarkus-cli-connector</artifactId>
+</dependency>
+----
+
+== Running in background
+
+Use `--background` to run an integration as a background process (Camel Main only):
+
+[source,bash]
+----
+$ camel run chuck.yaml --background
+Running Camel Main: chuck in background with PID: 80093 (waiting to startup)
+Log: /home/user/.camel/80093-run.log
+Camel Main: chuck (state: Running)
+----
+
+Use `camel ps` to list, `camel log` to tail output, and `camel stop` to shut down.
+
+The command waits up to 60 seconds for the integration to start, and reports any errors before returning.
+Set how long with `--background-wait`, such as `--background-wait=2m`, or do not wait with `--background-wait=false`.
+An integration that fails to start prints its log and exits with `1`.
+One that is still starting after the wait exits with `124`, and is left running.
+
+The output of the integration goes to `~/.camel/<pid>-run.log`, which `camel stop` removes.
+
+== Getting status
+
+The `camel get` command (equivalent to `camel get context`) shows overall status:
+
+[source,bash]
+----
+camel get
+  PID   NAME    CAMEL   PLATFORM        PROFILE  READY  STATUS   RELOAD  AGE   ROUTE  MSG/S  TOTAL  FAIL  INFLIGHT  LAST  DELTA  SINCE-LAST
+ 42240  cheese  4.12.0  JBang v0.126.0  dev      1/1   Running       0  1m8s    2/2   1.01     65     0         0     0     -1     1s/1s/-
+----
+
+The _Since Last_ column shows three time-since values: started/completed/failed.
+For example, `0s/0s/-` means the last started and completed message just happened with no failures yet.
+Use `--remote` to break down TOTAL into remote/total pairs.
+
+TIP: Use `camel get --watch` for continuous updates.
+
+== Route status
+
+See per-route statistics across all running integrations:
+
+[source,bash]
+----
+camel get route
+  PID   NAME      ID      FROM                        STATUS    AGE   TOTAL  FAILED  INFLIGHT  MEAN  MIN  MAX  SINCE-LAST
+ 61818  MyCamel   hello   timer://hello?period=2000   Running  29m2s    870       0         0     0    0   14     0s/0s/-
+ 63051  dude      java    timer://java?period=1000    Running    46s     46       0         0     0    0    9     0s/0s/-
+----
+
+Use `--remote` to break down TOTAL, FAILED and INFLIGHT into remote/total pairs: the exchanges that came from a remote
+endpoint, such as Kafka or HTTP, of all the exchanges of the route. A route with a remote consumer has only remote
+exchanges, and a route such as `direct:audit` has the remote exchanges of the routes that call it. The same works with
+`camel get processor --remote` and `camel top route --remote`, and the JSON of these commands has the remote counters
+as `remoteTotal`, `remoteFailed` and `remoteInflight`.
+
+Use `--checksum` to show the xref:routes.adoc#_route_checksum_and_revision[checksum and revision] of each route. The
+checksum is the same in every run while the route is not changed, so comparing it with an earlier run tells which routes
+changed; the revision counts the times a reload changed the route since the integration started. The JSON output
+(`--json`) always has them, as `checksum` and `revision`.
+
+TIP: Run `camel get --help` to see all available sub-commands.
+
+== Top status
+
+The `camel top` command shows utilization statistics sorted by heap usage:
+
+[source,bash]
+----
+camel top
+  PID   NAME     JAVA     CAMEL   PLATFORM            STATUS    AGE         HEAP        NON-HEAP     GC     THREADS   CLASSES
+ 22104  chuck    11.0.13  3.20.0  JBang               Running   2m10s  131/322/4294 MB  70/73 MB  17ms (6)      7/8  7456/7456
+ 14242  MyCamel  11.0.13  3.20.0  Spring Boot v2.7.3  Running  33m40s  115/332/4294 MB  62/66 MB  37ms (6)    16/16  8428/8428
+ 22116  bar      11.0.13  3.20.0  JBang               Running    2m7s   33/268/4294 MB  54/58 MB  20ms (4)      7/8  6104/6104
+----
+
+Columns: HEAP = used/committed/max, NON-HEAP = used/committed, GC = time (runs), CLASSES = loaded/total.
+
+Show routes sorted by slowest mean processing time with `camel top route`:
+
+[source,bash]
+----
+camel top route
+  PID   NAME     ID                     FROM                                 STATUS    AGE    TOTAL  FAILED  INFLIGHT  MEAN  MIN  MAX  SINCE-LAST
+ 22104  chuck    chuck-norris-source-1  timer://chuck?period=10000           Started     10s      1       0         0   163  163  163          9s
+ 22116  bar      route1                 timer://yaml2?period=1000            Started      7s      7       0         0     1    0   11          0s
+ 22104  chuck    chuck                  kamelet://chuck-norris-source        Started     10s      1       0         0     0    0    0          9s
+ 22104  chuck    log-sink-2             kamelet://source?routeId=log-sink-2  Started     10s      1       0         0     0    0    0          9s
+ 14242  MyCamel  hello                  timer://hello?period=2000            Started  31m41s    948       0         0     0    0    4          0s
+----
+
+== Visualizing routes
+
+Render a visual diagram of routes in a running integration:
+
+[source,bash]
+----
+camel cmd route-diagram myApp
+----
+
+This prints a Unicode route diagram in the terminal. Use `--theme=ascii` for plain text,
+or `--output=diagram.png --theme=light` to save as an image.
+A route diagram draws the steps of each route. With `--errors`, its `onException` clauses are drawn as well, in a
+frame of their own below its steps, with where its failures go.
+
+You can also render diagrams directly from source files (no running process needed):
+
+[source,bash]
+----
+camel cmd route-diagram my-route.yaml
+----
+
+Show how routes connect to each other and to external systems with the topology view:
+
+[source,bash]
+----
+camel cmd route-topology myApp
+camel cmd route-topology myApp --external
+----
+
+The `--external` flag includes external systems (Kafka, databases, etc.) as nodes in the graph.
+With a `--theme`, the `--errors` flag also draws the error handling: the routes reached only while a failure is
+handled (such as the target of a dead letter channel), in a frame of their own below the routes, with where their
+failures come from. With `--external` as well, the external systems only they use are in the frame too.
+Routes created by Kamelets are hidden, as they are an implementation detail of the Kamelet; use `--kamelets` to include them.
+Both commands include live metrics by default — use `--metric=false` to disable.
+
+TIP: The xref:camel-jbang-tui.adoc[Camel TUI] shows route diagrams and topology interactively.
+
+== Starting and stopping routes
+
+Stop all routes in an integration:
+
+[source,bash]
+----
+camel cmd stop-route chuck
+----
+
+Start them again:
+
+[source,bash]
+----
+camel cmd start-route chuck
+----
+
+Without a name, the command applies to all integrations: `camel cmd stop-route` / `camel cmd start-route`.
+
+Target a specific route with `--id`:
+
+[source,bash]
+----
+camel cmd start-route --id=route1
+----
+
+Scope to a specific integration by adding its name:
+
+[source,bash]
+----
+camel cmd start-route bar --id=route1
+----
+
+TIP: Separate multiple IDs with commas: `--id=route1,hello`.
+
+== Starting and stopping route groups
+
+*Available since Camel 4.14*
+
+View group status (aggregate of all routes in each group):
+
+[source,bash]
+----
+camel get group
+  PID   NAME  GROUP   ROUTES  STATUS   AGE  COVER  MSG/S  TOTAL  FAIL  INFLIGHT  MEAN  MIN   MAX   LAST  DELTA  SINCE-LAST
+ 53173  foo   first        2  Started   8s    4/4   1.00     15     0         1   504   501   511   502     -3     0s/0s/-
+ 53173  foo   second       3  Started  40s    7/7   0.00      8     0         0  2260  2256  2263  2263     +6     5s/2s/-
+----
+
+Stop a group:
+
+[source,bash]
+----
+camel cmd stop-group foo --id=first
+----
+
+Start it again:
+
+[source,bash]
+----
+camel cmd start-group foo --id=first
+----
+
+Group commands work the same way as route commands (see above).
+
+== Enabling and disabling EIPs
+
+*Available since Camel 4.14*
+
+Disable individual processors at runtime without changing source code.
+List processors with `camel get processor`, then disable by id:
+
+[source,bash]
+----
+camel cmd disable-processor --id=log1
+----
+
+Re-enable a specific processor or all at once:
+
+[source,bash]
+----
+camel cmd enable-processor --id=log1
+camel cmd enable-processor
+----
+
+TIP: Separate multiple IDs with commas: `--id=log1,log2,setBody2`.
+
+== Semantic definitions and evaluation
+
+The CLI can inspect and try the running application's
+xref:next@components:languages:semantic-language.adoc[semantic definitions and experts].
+The application must run Camel 4.23 or newer, include `camel-semantic` with the
+`semantic-metadata`, `semantic-evaluate` and `semantic-audit` developer consoles, and have the local
+CLI connector enabled.
+These commands use the connector; enabling the HTTP console is unnecessary.
+
+[source,bash]
+----
+camel semantic my-app
+camel semantic get my-app
+camel semantic get my-app --json
+camel semantic get my-app --expert=guard
+----
+
+`camel semantic` defaults to `camel semantic get`. The text output uses tables listing
+definition names, experts, operations, state selectors, result types and resolution
+errors, followed by the registered experts. Each evaluation declares its own expert;
+there is no default expert. Configuration and contract-resolution errors appear alongside
+the affected definition or expert. `--expert`
+shows one expert's operations, input and result semantics, and parameter contract.
+Inspection does not perform inference. Use `--json` for machine-readable output.
+
+Evaluate a named definition with a sample exchange:
+
+[source,bash]
+----
+camel semantic eval my-app --evaluation=safe \
+  --body='Please summarize this message' --header=subject=example \
+  --variable=language=en --json
+----
+
+The definition's state selector reads the supplied body, headers and exchange-local
+variables. Variables with repository prefixes such as `global:` are rejected. The
+sample is evaluated directly; it is not sent through the application's routes.
+
+Alternatively, invoke an expert operation directly. Use `semantic get --expert` to
+find the operation names and parameters supported by that expert:
+
+[source,bash]
+----
+camel semantic eval my-app --expert=guard --operation=detect \
+  --input='Please summarize this message' --json
+camel semantic eval my-app --expert=grader --operation=score \
+  --input='Sample answer' --parameter='criteria=json:["poor","good","excellent"]' --json
+----
+
+Choose either a named evaluation or a direct expert call. Direct calls require
+`--expert`, `--operation` and `--input`. Repeat `--header`, `--variable` or `--parameter`
+for multiple entries; duplicate keys are rejected.
+
+Values are text by default. Prefix a value with `json:` for a typed JSON value, for
+example `--parameter=threshold=json:0.7`, `--variable=enabled=json:true`, or
+`--input='json:["first","second"]'`. Use a JSON string to pass literal text beginning
+with `json:` or `file:`. `--body=file:sample.txt` and `--input=file:sample.txt` read the
+file as UTF-8 text.
+
+For an expert accepting images, `--body=image:/path/picture.png` or
+`--input=image:/path/picture.png` reads a local PNG, JPEG, GIF or WebP file. Before reading,
+the CLI queries the selected expert's runtime metadata for its `maxImageBytes` limit.
+It checks both the file size and the actual read, and checks inline images before submitting
+an evaluation. Configure the limit on the expert bean; the OpenAI Decisions expert defaults
+to 10 MB (10,000,000 bytes) per image before base64 encoding. Both the CLI and TUI use that
+same configuration. Missing image support or limit metadata prevents local image loading;
+no evaluation is submitted. Use a JSON string to pass a literal `image:` prefix.
+
+Evaluation prints the value, available probability or probabilities, confidence,
+provider metadata, elapsed milliseconds and any error. It invokes the configured
+provider and may incur charges. `--evaluation-timeout` bounds runtime evaluation
+(default and maximum: 50000 milliseconds). `--timeout` bounds the CLI's wait for the
+reply (default: 60000 milliseconds). A CLI timeout removes its request and asks the
+connector to cancel unfinished work. Provider interruption is cooperative; remote or
+native inference may continue. Configure provider-specific request timeouts as well.
+
+Semantic commands use readable text by default: expert operations include a parameter table,
+evaluation results use labelled fields, and audit events show the record and captured interpretation
+in separate sections. Add `--json` to any semantic command to receive the complete JSON response
+for scripts.
+
+All semantic commands accept an integration name or PID. With no name they select the only
+running integration; ambiguous selection fails and lists the matching PIDs.
+Known versions older than 4.23 fail immediately with exit code 3. If the runtime version
+is unavailable, the CLI attempts the request and applies the normal timeout.
+Each request has its own reply file, so concurrent commands do not consume each
+other's results.
+
+=== Semantic audit history
+
+`camel semantic audit` reads retained evaluations and request outcomes from the configured reader.
+Querying performs no inference and does not change capture configuration.
+
+[source,bash]
+----
+camel semantic audit my-app
+camel semantic audit my-app --category=evaluation --executing-route-id=assess --limit=20
+camel semantic audit my-app --expert="team expert" --since=2026-10-10T08:00:00Z --json
+camel semantic audit my-app --event-id=EVENT_ID --json
+camel semantic audit my-app --case-event-id=EVENT_ID --max-records=200 --json
+camel semantic audit my-app --event-ids=EVENT_1,EVENT_2 --max-records=200 --json
+----
+
+Tables separate typed Result from Execution and show captured route provenance and breadcrumb association.
+Detail retains fractional Score values, captured labels and declared meanings. Missing interpretation is
+shown explicitly; current definitions do not reconstruct old results. Stored input is available only when
+capture was explicitly enabled. Detail responses label it as untrusted data. Lists omit input; case/export
+output requires `--include-input` to include it. The full response is available with `--json`.
+
+Pages are newest first, default 50 and maximum 200. Exact filters are `--category` (`evaluation` or `request`),
+`--expert`, `--definition`, `--operation`, entry `--route-id`, `--executing-route-id`, `--exchange-id` and `--breadcrumb-id`.
+`--since` is inclusive and `--until` is exclusive, using ISO-8601 event/completion timestamps with a UTC offset.
+Together they select `[since, until)`; the lower bound must precede the upper bound.
+`--result-type` selects `BOOLEAN`, `CHOICE`, `SCORE` or `CLASSIFICATION`. With that explicit type,
+`--result-value` matches a Boolean (`true`/`false`), an exact Choice label or numeric Score equality;
+`--result-label` tests Classification membership; `--score-min`/`--score-max` specify inclusive finite Score bounds.
+Missing or omitted values do not match value predicates. These filters apply before pagination, to retained
+records only. Use the returned `nextCursor` with the same filters and both time bounds.
+Unsupported filters produce an error. `--event-id` is an exclusive detail selector and returns exit code 3
+when the record is absent. Persisted legacy decision records remain retrievable by ID and bulk export.
+
+Cases associate records within one reader by breadcrumb, exchange, invocation and supported batch/request
+relationships. Association is not proven causality; completeness remains unknown. `--max-records` bounds
+case and bulk responses to 1..1000 (default 200), with a 4 MiB response budget. Missing IDs, bounded retrieval,
+cursor expiry and backend failures remain distinct. Backend failures return exit code 1 without partial success.
+
+=== Semantic monitoring
+
+`camel semantic monitoring` reads current cached measurements supplied by semantic metric producers.
+It works independently of audit retention and JMX. It performs no inference or backend query.
+
+[source,bash]
+----
+camel semantic monitoring my-app --json
+camel semantic monitoring my-app --source=departmentMetrics
+----
+
+Producers supply meaning, units, bounded dimensions, observation times, counts, distributions and durations.
+The response includes collection health, omitted sources and evicted series. The cache contains the latest
+values only and is cleared on restart. Historical queries, comparisons, alerting and dashboards belong in
+external monitoring systems. See xref:next@components:languages:semantic-language.adoc[Semantic evaluation]
+for the measurement contract and Micrometer follow-up scope.
+
+=== Semantic command output and exit codes
+
+With `--json`, stdout contains exactly one JSON document. Inspection returns the
+runtime metadata object, including empty `evaluations` and `experts` arrays when
+nothing is published. Successful evaluations retain the runtime result fields.
+Errors use `{"status":"error","code":N,"message":"..."}` and retain any runtime
+result fields, such as `error` and `elapsedMillis`. Diagnostics go to stderr.
+
+[cols="1,4",options="header"]
+|===
+| Exit code | Meaning
+| 0 | Successful inspection, audit retrieval (including empty history) or evaluation, including a boolean result of `false`.
+| 1 | The integration rejected the action, evaluation or audit query failed, or an audit cursor expired.
+| 2 | Invalid command arguments or sample values.
+| 3 | No matching integration, ambiguous selection, unavailable semantic tooling, expert operations or selected audit event.
+| 4 | No reply before the CLI timeout.
+| 70 | Unexpected local CLI error; stderr includes the stack trace.
+|===
+
+See xref:jbang-commands/camel-jbang-semantic-get.adoc[camel semantic get],
+xref:jbang-commands/camel-jbang-semantic-eval.adoc[camel semantic eval] and
+xref:jbang-commands/camel-jbang-semantic-audit.adoc[camel semantic audit]
+for the complete option reference.
+
+== Developer Console
+
+Enable the web-based developer console with `--console`:
+
+[source,bash]
+----
+camel run hello.java --console
+----
+
+The console is accessible at http://localhost:8080/q/dev and provides insights into routes,
+performance, and EIP-level metrics. The endpoints support both HTTP GET and POST.
+
+When running with xref:camel-jbang-running.adoc#_runtimes[another runtime], the console is served where
+that runtime puts it:
+
+[width="100%",cols="2,4,4",options="header"]
+|===
+| Runtime | `--console` | `--console --observe`
+| jbang, Camel Main | `http://localhost:8080/q/dev` | `http://localhost:9876/q/dev` (on the management port)
+| Spring Boot | `http://localhost:8080/actuator/camel` (the `camel` actuator endpoint) | `http://localhost:9876/observe/camel`
+| Quarkus | `http://localhost:8080/q/camel/dev-console` | `http://localhost:8080/q/camel/dev-console`
+|===
+
+The console has no authentication, so it is meant for development only. `camel export --console` therefore
+includes the console dependency in the exported project, but only enables it in `application-dev.properties`,
+so the console is there when the project runs with the dev profile (`camel.main.profile=dev` with Camel Main,
+`spring.profiles.active=dev` with Spring Boot, and `quarkus:dev` with Quarkus) and not in a production build.
+With `camel export --profile=dev` the dev profile is flattened into `application.properties`, and so is the console.
+
+GET with query parameters:
+
+[source,bash]
+----
+curl -s -H "Accept: application/json" http://0.0.0.0:8080/q/dev/top/ | jq
+----
+
+POST with a JSON body (avoids URL length limits for large payloads):
+
+[source,bash]
+----
+curl -s -X POST -H "Accept: application/json" -H "Content-Type: application/json" \
+  -d '{"language":"simple","template":"${body}","body":"hello"}' \
+  http://0.0.0.0:8080/q/dev/eval-language | jq
+----
+
+== OpenAPI Swagger UI
+
+For integrations using the xref:manual::rest-dsl.adoc[REST DSL], you can browse the generated OpenAPI
+document in Swagger UI (similar to Hawtio for JMX):
+
+[source,bash]
+----
+camel run hello.java --openapi-ui
+----
+
+Swagger UI is served at http://localhost:8080/q/openapi. The OpenAPI JSON document is at
+http://localhost:8080/q/openapi.json (configured automatically via `camel.rest.apiContextPath`).
+
+You can combine this with REST routes defined in Java, YAML, or XML DSL. The flag also works on
+`camel run --dev` and adds `camel-openapi-java` and `camel-platform-http-main` to the runtime
+classpath when needed.
+
+== Message history
+
+*Available since Camel 4.17*
+
+The `camel get history` command shows a step-by-step summary of the last completed message
+— what each EIP did, with curated details at each step.
+
+Example route that reads a file, splits by line, filters, calls HTTP, and logs:
+
+._Java-only: route with split, filter, and HTTP call_
+[source,java]
+----
+import org.apache.camel.builder.RouteBuilder;
+
+public class foo extends RouteBuilder {
+
+    @Override
+    public void configure() throws Exception {
+        from("file:inbox?noop=true")
+            .log("Incoming file")
+            .split(body().tokenize("\n"))
+              .filter(body().contains("world"))
+                .log("Stop the world")
+                .stop()
+              .end()
+              .to("log:line")
+            .end()
+            .to("https://camel.apache.org/xxx?throwExceptionOnFailure=false")
+            .to("log:after-http")
+            .log("complete");
+    }
+}
+----
+
+With a 4-line input file (`hello`, `world`, `from`, `me`), the history shows:
+
+[source,bash]
+----
+$ camel get history --source
+Message History of last completed (id:32E020F6050C165-0000000000000000 status:success ago:4s pid:91133 name:foo)
+       ID           PROCESSOR                                              ELAPSED   EXCHANGE
+ *-->  foo.java:7   from[file://inbox?noop=true]                                 0       0000  File: foo.txt (19 bytes)
+       foo.java:8     log[Incoming file]                                         0       0000
+       foo.java:9     split[tokenize(body, \n)]                                  8       0000  Split (4)
+       foo.java:10      filter[{body contains world}]                            0  0001/0000  Filter: false
+       foo.java:14      to[log:line]                                             0  0001/0000
+       foo.java:10      filter[{body contains world}]                            0  0002/0000  Filter: true
+       foo.java:11        log[Stop the world]                                    0  0002/0000
+       foo.java:12        stop                                                   0  0002/0000
+       foo.java:10      filter[{body contains world}]                            0  0003/0000  Filter: false
+       foo.java:14      to[log:line]                                             0  0003/0000
+       foo.java:10      filter[{body contains world}]                            0  0004/0000  Filter: false
+       foo.java:14      to[log:line]                                             0  0004/0000
+       foo.java:16    to[https:\/\/camel.apache.org\/xxx?throwExceptionO…      143       0000  404=Not Found Content-Type=text/html; charset=utf-8
+       foo.java:17    to[log:after-http]                                         1       0000
+       foo.java:18    log[complete]                                              0       0000
+ *<--  foo.java:7   from[file://inbox?noop=true]                               157       0000  Success
+----
+
+Each split message gets its own exchange id linked to the parent. The HTTP call shows the 404 status and content type.
+
+=== Interactive mode
+
+Use `camel get history --it` for an interactive step-through view (similar to `camel debug`),
+showing full message details including headers and body. Press ENTER to advance, P+ENTER to go back.
+
+TIP: Run `camel get history --help` for all options.
+
+== Tailing logs
+
+Tail logs from one, several, or all integrations:
+
+NOTE: The `camel log` command is not supported in Spring Boot or Quarkus runtimes.
+
+[source,bash]
+----
+camel log chuck
+camel log bar,chuck
+camel log
+----
+
+Highlight keywords with `--find` (repeatable) or filter lines with `--grep` (case-insensitive):
+
+[source,bash]
+----
+camel log chuck --find=invoice --find=order
+camel log chuck --grep=error
+----
+
+By default, `log` tails continuously. Use `--follow=false` to output matching lines and exit.
+
+=== The log of the previous run
+
+When an integration stops, its log is kept as the log of its previous run, like `kubectl logs --previous` in Kubernetes.
+Use `--previous` to see why an integration stopped, such as one that failed to start:
+
+[source,bash]
+----
+$ camel log chuck --previous
+The previous run of chuck (pid 80093) ended at 2026-10-19 10:32:01 (2m3s ago) with exit code 70: Failed to create route: route1 ...
+2026-10-19 10:32:00.912  INFO 80093 --- [           main] org.apache.camel.main.MainSupport   : Apache Camel (JBang) 4.24.0 is starting
+...
+----
+
+The first line, on stderr, says which run it was and how it ended. The log follows on stdout.
+A run that Ctrl+C or SIGTERM stopped ended with exit code 130 or 143 (`(SIGINT)` or `(SIGTERM)` follows the code): the
+JVM exits with 128 and the number of the signal, as a shell and Kubernetes show it.
+The options `--tail`, `--since`, `--grep`, `--find` and `--startup` work as they do for a running integration.
+When you run `camel log` with the name of an integration that is not running, the error says how its previous run ended.
+
+Each name keeps the log of its last run that ended, as `~/.camel/<name>-previous.log`.
+The next run of that name that ends replaces it. Like Kubernetes, at most the last 10 MB of a log are kept.
+An integration that was killed, or whose JVM crashed, leaves its log behind.
+That log becomes the log of its previous run the next time you look one up.
+
+The log is kept for every runtime: `jbang`, the default (also with `--background`), and the runtimes that run with
+Maven (`--runtime=spring-boot`, `quarkus` or `main`, and `camel run pom.xml` of an existing project).
+With `quarkus` and `spring-boot`, Maven runs the app in a process of its own, so the first line has no pid and no exit
+code of the app: it says how Maven ended when it failed, such as `Maven ended with exit code 1`.
+A run on a Maven runtime that was killed leaves its log behind as `~/.camel/<name>.log`. That log becomes the log of the
+previous run when the next run of that name starts.
+
+== Configuring logging levels
+
+View and change logging levels at runtime:
+
+[source,bash]
+----
+camel cmd logger
+camel cmd logger --logging-level=DEBUG foo
+----
+
+TIP: Omit the integration name to change levels for all running integrations.
+
+=== Per-category logging
+
+Set category-specific levels from the CLI (repeatable):
+
+[source,bash]
+----
+$ camel run myapp.yaml --logging-category=org.apache.kafka=DEBUG --logging-category=com.foo.something=TRACE
+----
+
+Or in `application.properties` (both Camel/Spring Boot and Quarkus styles are supported):
+
+[source,properties]
+----
+
+# make it easy to configure individual logging levels
+logging.level.org.apache.kafka = DEBUG
+logging.level.com.foo.something = TRACE
+
+# you can also use quarkus style naming
+quarkus.log.category."org.apache.kafka".level = DEBUG
+quarkus.log.category."com.foo.something".level = TRACE
+----
+
+== Tracing messages
+
+The `camel trace` command shows every step a message takes through your routes.
+Exchange ids are colour-grouped for correlation when traces are interleaved.
+
+Check tracing status:
+
+[source,bash]
+----
+camel trace
+----
+
+TIP: Since Camel 4.8, tracing starts in standby mode (dev profile). Enable on startup
+with `camel.trace.enabled=true` in `application.properties`.
+
+Start, dump, and stop tracing:
+
+[source,bash]
+----
+camel trace --action=start
+camel trace --action=dump
+camel trace --action=stop
+----
+
+Use `--action=clear` to discard already-traced messages.
+
+=== OpenTelemetry spans
+
+When OpenTelemetry tracing is enabled, view collected spans:
+
+[source,bash]
+----
+camel cmd span myApp
+----
+
+Filter by trace ID, route, component, or exchange ID:
+
+[source,bash]
+----
+camel cmd span myApp --filter=route1
+----
+
+Show a waterfall timeline for a specific trace:
+
+[source,bash]
+----
+camel cmd span myApp --trace=abc123
+----
+
+Use `--flat` for a flat list of individual spans instead of grouped traces.
+
+== Health checks
+
+View health check status:
+
+[source,bash]
+----
+camel get health
+  PID   NAME    AGE  ID             RL  STATE  RATE    SINCE   MESSAGE
+ 61005  mybind   8s  camel/context   R   UP    2/2/-  1s/3s/-
+----
+
+The RATE column shows total/success/failure counts. SINCE shows time-since for each.
+When a check starts failing, e.g., `77/-/3` means 77 total, 0 consecutive successes, 3 consecutive failures.
+
+Use `--level=full` for consumer and route-level checks. Use `--trace` to show exception stack traces:
+
+[source,bash]
+----
+camel get health --trace
+  PID   NAME      AGE   ID                                        RL  STATE    RATE       SINCE     MESSAGE
+ 61038  mykafka  6m19s  camel/context                             R   UP    187/187/-  1s/6m16s/-
+ 61038  mykafka  6m19s  camel/kafka-consumer-kafka-not-secure...  R  DOWN   187/-/187  1s/-/6m16s  KafkaConsumer is not ready - Error: Invalid url in bootstrap.servers: value
+
+
+------------------------------------------------------------------------------------------------------------------------
+                                                       STACK-TRACE
+------------------------------------------------------------------------------------------------------------------------
+	PID: 61038
+	NAME: mykafka
+	AGE: 6m19s
+	CHECK-ID: camel/kafka-consumer-kafka-not-secured-source-1
+	STATE: DOWN
+	RATE: 187
+	SINCE: 6m16s
+	METADATA:
+		bootstrap.servers = value
+		group.id = 7d8117be-41b4-4c81-b4df-cf26b928d38a
+		route.id = kafka-not-secured-source-1
+		topic = value
+	MESSAGE: KafkaConsumer is not ready - Error: Invalid url in bootstrap.servers: value
+	org.apache.kafka.common.KafkaException: Failed to construct kafka consumer
+		at org.apache.kafka.clients.consumer.KafkaConsumer.<init>(KafkaConsumer.java:823)
+		at org.apache.kafka.clients.consumer.KafkaConsumer.<init>(KafkaConsumer.java:664)
+		at org.apache.kafka.clients.consumer.KafkaConsumer.<init>(KafkaConsumer.java:645)
+		at org.apache.kafka.clients.consumer.KafkaConsumer.<init>(KafkaConsumer.java:625)
+		at org.apache.camel.component.kafka.DefaultKafkaClientFactory.getConsumer(DefaultKafkaClientFactory.java:34)
+		at org.apache.camel.component.kafka.KafkaFetchRecords.createConsumer(KafkaFetchRecords.java:241)
+		at org.apache.camel.component.kafka.KafkaFetchRecords.createConsumerTask(KafkaFetchRecords.java:201)
+		at org.apache.camel.support.task.ForegroundTask.run(ForegroundTask.java:123)
+		at org.apache.camel.component.kafka.KafkaFetchRecords.run(KafkaFetchRecords.java:125)
+		at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:515)
+		at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:264)
+		at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1128)
+		at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:628)
+		at java.base/java.lang.Thread.run(Thread.java:829)
+	Caused by: org.apache.kafka.common.config.ConfigException: Invalid url in bootstrap.servers: value
+		at org.apache.kafka.clients.ClientUtils.parseAndValidateAddresses(ClientUtils.java:59)
+		at org.apache.kafka.clients.ClientUtils.parseAndValidateAddresses(ClientUtils.java:48)
+		at org.apache.kafka.clients.consumer.KafkaConsumer.<init>(KafkaConsumer.java:730)
+		... 13 more
+----
+
+TIP: Run `camel get health --help` for all options.
+
+== Listing services
+
+List hosted services (REST, TCP, etc.) across all running integrations:
+
+[source,bash]
+----
+camel get service
+ PID   NAME       COMPONENT      PROTOCOL  SERVICE
+ 1912  netty      netty          tcp       tcp:localhost:4444
+ 2023  greetings  platform-http  rest      http://0.0.0.0:7777/camel/greetings/{name} (GET)
+ 2023  greetings  platform-http  http      http://0.0.0.0:7777/q/dev
+----
+
+NOTE: Components must advertise services via the xref:camel-console.adoc[Developer Console] to appear here.
+
+== Observability with metrics
+
+Enable Micrometer metrics with `--observe` or configure in `application.properties`:
+
+[source,properties]
+----
+# enable HTTP management server with metrics
+camel.management.enabled=true
+camel.management.metricsEnabled=true
+
+# turn on micrometer metrics
+camel.metrics.enabled=true
+# include more camel details
+camel.metrics.enableMessageHistory=true
+# include additional out-of-the-box micrometer metrics for cpu, jvm and used file descriptors
+camel.metrics.binders=processor,jvm-info,file-descriptor
+----
+
+Access metrics at http://localhost:8080/observe/metrics or from the CLI:
+
+[source,bash]
+----
+$ camel get metric
+  PID   NAME         TYPE   METRIC                         ROUTE                  VALUE  MEAN  MAX  TOTAL
+ 11562  MyCoolCamel  timer  camel.exchange.event.notifier                             3    12   27     35
+ 11562  MyCoolCamel  timer  camel.exchange.event.notifier                             3     1    2      3
+ 11562  MyCoolCamel  gauge  camel.routes.added                                        3
+ 11562  MyCoolCamel  gauge  camel.routes.running                                      3
+ 11562  MyCoolCamel  gauge  jvm.info                                                  1
+ 11562  MyCoolCamel  gauge  process.cpu.usage                     0.0045185067010171795
+ 11562  MyCoolCamel  gauge  process.files.max                                     10240
+ 11562  MyCoolCamel  gauge  process.files.open                                      288
+ 11562  MyCoolCamel  gauge  system.cpu.count                                          8
+ 11562  MyCoolCamel  gauge  system.cpu.usage                        0.15222772277227722
+ 11562  MyCoolCamel  gauge  system.load.average.1m                        3.58935546875
+----
+
+Use `--filter` for the metrics of a type, or with a name or tags that contain the text or match a pattern such as
+`timer*`, `--custom` to leave out the metrics of Camel itself, and `--all` to include the metrics that are still `0`.
+
+== Circuit breaker status
+
+View the state of xref:components:eips:circuitBreaker-eip.adoc[Circuit Breakers]:
+
+[source,bash]
+----
+camel get circuit-breaker
+  PID   NAME  COMPONENT     ROUTE   ID               STATE      PENDING  SUCCESS  FAIL  REJECT  FALLBACK  TIMEOUT
+ 56033  mycb  resilience4j  route1  circuitBreaker1  HALF_OPEN        5        2     3       0         3        1
+----
+
+REJECT counts the calls the open breaker refused without calling the service, FALLBACK the calls
+the `onFallback` answered (failed, timed out and rejected calls alike), and TIMEOUT the calls that hit
+the configured timeout, which the breaker otherwise counts as plain failures. A BULKHEAD column with
+the calls rejected by a full bulkhead is shown when a bulkhead is configured.
+
+TIP: Use `camel get circuit-breaker --watch` for continuous updates.
+
+== Using Jolokia and Hawtio
+
+https://hawt.io/[Hawtio] provides a web console for inspecting Camel integrations via JMX,
+including route visualization with live performance metrics.
+
+Attach the Jolokia JVM agent to a running integration (by PID or name):
+
+[source,bash]
+----
+camel jolokia 62506
+Started Jolokia for PID 62506
+http://127.0.0.1:8778/jolokia/
+----
+
+Then launch Hawtio (automatically downloads and opens in browser):
+
+[source,bash]
+----
+camel hawtio
+----
+
+In Hawtio, click the _Discover_ tab to see all local Jolokia agents,
+then click the green _lightning_ icon to connect.
+
+Or do it in one command — attach Jolokia and launch Hawtio together:
+
+[source,bash]
+----
+camel hawtio dude
+----
+
+Uninstall Jolokia when done:
+
+[source,bash]
+----
+camel jolokia 62506 --stop
+----
+
+TIP: Run `camel hawtio --help` for options.
+
+== See Also
+
+* xref:camel-jbang-diagnostics.adoc[Diagnostics] — errors, memory leaks, heap and thread dumps, startup, SQL and Kafka
+* xref:camel-jbang-kubernetes.adoc[Camel Kubernetes Plugin] — deploy and manage Camel integrations on Kubernetes
+* xref:camel-jbang-test.adoc[Camel Testing Plugin] — write and run automated tests with Citrus

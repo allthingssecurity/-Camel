@@ -1,0 +1,216 @@
+= Camel Catalog
+
+Each release includes a catalog with all sorts of information about what’s included in the release.
+
+== About Camel Catalog
+
+The catalog is shipped in an independent standalone `camel-catalog` JAR containing the following information:
+
+- List of all components, data formats, languages, EIPs, and everything else in the release
+- Curated lists for Camel Quarkus, Camel Spring Boot, and Camel Main runtimes
+- JSON schema with extensive details for every option
+- Human-readable documentation for every option
+- AsciiDoc documentation pages for components, EIPs, data formats, languages, and more
+- Categorization of options (for example, find all database components)
+- XML schema for the XML DSLs
+
+There is also a Java API for tooling:
+
+- validating Camel endpoints and the Simple language
+- creating Camel endpoint URLs
+
+The catalog provides a wealth of information that tooling can tap into and use.
+
+=== Tooling using Camel Catalog
+
+The following tools uses the catalog in their editor:
+
+- https://plugins.jetbrains.com/plugin/9371-apache-camel-idea-plugin[Camel tooling for IDEA]
+- https://marketplace.eclipse.org/content/language-support-apache-camel[Camel tooling for Eclipse]
+- https://marketplace.visualstudio.com/items?itemName=redhat.vscode-apache-camel[Camel tooling for VS Code]
+- https://marketplace.visualstudio.com/items?itemName=camel-karavan.karavan[Camel Karavan for VS Code]
+- https://marketplace.visualstudio.com/items?itemName=redhat.vscode-kaoto[Kaoto for VS Code]
+- https://hawt.io/[Hawtio]
+
+The xref:camel-report-maven-plugin.adoc[Camel Maven validation] plugin uses the catalog during validation of all the
+Camel endpoints found while scanning the source code.
+
+The xref:camel-jbang.adoc[Camel CLI] uses the catalog in some of the commands and actions.
+
+=== Layout of camel-catalog
+
+JAR includes the information using the following directory layout:
+
+[source,text]
+----
+org
+└── apache
+  └── camel
+    └── catalog
+      ├── beans (JSON schema)
+      ├── components (JSON schema)
+      ├── dataformats (JSON schema)
+      ├── dev-consoles (JSON schema)
+      ├── dev-consoles-openapi.json (OpenAPI 3.0 specification)
+      ├── docs (AsciiDoc documentation)
+      ├── jbang (JSON schema)
+      ├── languages (JSON schema)
+      ├── main (JSON schema)
+      ├── models (JSON schema)
+      ├── models-app (JSON schema)
+      ├── others (JSON schema)
+      ├── releases (JSON schema)
+      ├── schemas (XML and JSON schemas)
+      ├── test-infra (JSON schema)
+      └── transformers (JSON schema)
+----
+
+Each directory contains files with the information. Every Camel component is included
+as JSON schema files in the components directory. For example, the Timer component
+is included in the file timer.json.
+
+The `dev-consoles` directory contains JSON schema files describing every
+xref:camel-console.adoc[Dev Console]'s query options and, since Camel 4.23, an authoritative
+response schema generated directly from the console's typed Java `Response` record. The top-level
+`dev-consoles-openapi.json` file aggregates all of this into a single OpenAPI 3.0 specification
+covering every dev console endpoint, so the same contract used internally to serve the live `api`
+dev console is also available standalone for tooling. A `dev-consoles.properties` index file lists
+all available dev console names.
+
+The `docs` directory contains the AsciiDoc documentation pages for all components, EIPs,
+data formats, languages, and other artifacts. A `docs.properties` index file lists all
+available documentation names.
+
+The `schemas` directory contains the XML schemas for the XML DSLs (`camel-spring.xsd`,
+`camel-xml-io.xsd`) and the YAML DSL model (`camelYamlDsl-model.json`).
+The YAML DSL model is a generated data structure describing every valid key at every
+nesting level in the YAML DSL, with types, descriptions, required flags, default values,
+and enum choices. It can be used by third-party tooling (editors, IDE plugins, visual
+designers) to provide context-aware code completion and validation for YAML DSL routes.
+
+=== Finding components by protocol or product name
+
+People, and AI agents driving Camel through tooling, often refer to a component by the protocol or
+product it connects to rather than by its Camel scheme: _mqtt_ (the component is `paho-mqtt5`),
+_s3_ (`aws2-s3`), _rabbitmq_ (`spring-rabbitmq`), _pubsub_ (`google-pubsub`). The catalog can look
+components, data formats and languages up by such a term, ranking the best matches first:
+the exact scheme or name, then declared aliases, alternative schemes, words of the title, words of the
+scheme or name, and finally names containing the term. A component that shares one implementation under
+several schemes (such as `imap`, `pop3` and `smtp`) is returned once.
+
+[source,java]
+----
+CamelCatalog catalog = new DefaultCamelCatalog();
+
+catalog.suggestComponentNames("mqtt", 5);       // [paho-mqtt5]
+catalog.suggestComponentNames("s3", 5);         // [aws2-s3, aws2-s3-vectors]
+catalog.suggestComponentNames("amq", 5);        // [activemq, activemq6, amqp]
+catalog.suggestComponentNames("aws", 5);        // at most five of the many AWS components
+catalog.suggestDataFormatNames("yaml", 5);      // [snakeYaml]
+catalog.suggestLanguageNames("path", 5);        // [jsonpath, xpath]
+----
+
+Component developers can declare the shorthands a title cannot provide with the `aliases` attribute of
+`@Metadata` on the endpoint class, as the mail component does for _mail_ and _email_:
+
+[source,java]
+----
+@Metadata(aliases = { "mail", "email" })
+@UriEndpoint(firstVersion = "1.0.0", scheme = "imap,imaps,pop3,pop3s,smtp,smtps", ...)
+public class MailEndpoint extends ScheduledPollEndpoint {
+----
+
+Aliases are descriptive names for discovery only; they cannot be used as the scheme in an endpoint URI.
+
+=== Body types in the Catalog
+
+The options of a component say how to configure it, but not what the message body is after a step. That is the
+question people, IDEs and AI agents ask most when they write the next step of a route: the file consumer gives the
+file it read, the `http` producer leaves the response as a byte array or a stream, and after `unmarshal: json` the body
+is a `Map` or a `List`.
+
+A component, data format, language or EIP that declares its body types has a `bodyTypes` section in the catalog, with
+an entry per side: what a consumer gives, what a producer needs and leaves, what a data format marshals and unmarshals
+to, what an expression reads and gives, and what an EIP needs, leaves and starts its own steps with:
+
+[source,json]
+----
+"bodyTypes": {
+  "producerIn": { "carriers": [ "text", "bytes", "stream", "file" ],
+    "description": "What converts to an InputStream: text, bytes, a stream or a file. A Map or a List fails: marshal it first" },
+  "producerOut": { "carriers": [ "unchanged" ] }
+}
+----
+
+The Java API gives them on the model:
+
+[source,java]
+----
+CamelCatalog catalog = new DefaultCamelCatalog();
+
+BodyTypeModel out = catalog.componentModel("xslt").getBodyType(BodyTypeModel.PRODUCER_OUT);
+out.getCarriers();     // [text]
+out.getJavaType();     // java.lang.String
+----
+
+See xref:body-types.adoc[Message Body Types] for what the body types are, the tools that use them, how components
+declare them, and the JSON of each side with the rule to read it for the options of a step.
+
+=== Documentation in the Catalog
+
+The catalog includes the AsciiDoc documentation pages from all modules. This makes the full
+documentation available to tooling such as AI agents (via MCP tools), the Camel CLI/TUI,
+and IDE plugins — for every Camel version, including SNAPSHOT and non-LTS releases.
+
+The documentation filenames follow the naming convention used in each module's `src/main/docs/` directory:
+
+- Components: `<name>-component.adoc` (e.g., `kafka-component.adoc`)
+- Data formats: `<name>-dataformat.adoc` (e.g., `jackson2-dataformat.adoc`)
+- Languages: `<name>-language.adoc` (e.g., `simple-language.adoc`)
+- EIPs: `<name>-eip.adoc` (e.g., `split-eip.adoc`)
+- Others: `<name>.adoc` (e.g., `yaml-dsl.adoc`)
+
+The Java API provides the following methods for accessing documentation:
+
+[source,java]
+----
+CamelCatalog catalog = new DefaultCamelCatalog();
+
+// list all available documentation names
+List<String> docNames = catalog.findDocNames();
+
+// load documentation by exact name (without .adoc extension)
+String doc = catalog.asciiDoc("kafka-component");
+
+// convenience methods that append the type suffix automatically
+String componentDoc = catalog.componentAsciiDoc("kafka");        // loads kafka-component.adoc
+String dataFormatDoc = catalog.dataFormatAsciiDoc("jackson2");   // loads jackson2-dataformat.adoc
+String languageDoc = catalog.languageAsciiDoc("simple");         // loads simple-language.adoc
+String modelDoc = catalog.modelAsciiDoc("split-eip");            // loads split-eip.adoc
+String otherDoc = catalog.otherAsciiDoc("yaml-dsl");             // loads yaml-dsl.adoc
+----
+
+=== Dev Console information in the Catalog
+
+The catalog also includes the query options and response schema for every
+xref:camel-console.adoc[Dev Console], so tooling can discover what a console accepts and
+what it returns without having to start a running Camel application first.
+
+The Java API provides the following methods for accessing dev console information:
+
+[source,java]
+----
+CamelCatalog catalog = new DefaultCamelCatalog();
+
+// list all available dev console names
+List<String> consoleNames = catalog.findDevConsoleNames();
+
+// look up a single dev console's model, including its query options and response schema
+DevConsoleModel model = catalog.devConsoleModel("circuit-breaker");
+
+// summary of every dev console in JSon
+String summary = catalog.listDevConsolesAsJson();
+
+// the OpenAPI 3.0 specification aggregated across every dev console endpoint
+String openApiSpec = catalog.devConsolesOpenApiSpec();
+----

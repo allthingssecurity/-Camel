@@ -1,0 +1,567 @@
+= Release Guide
+
+This guide covers how to create and announce a Camel release. Instructions on updating the website to include the new documentation version are xref:release-guide-website.adoc[here].
+
+[[ReleaseGuide-Prequisites]]
+== Prequisites
+
+To prepare or perform a release, you *must be* at least an Apache Camel committer.
+
+* The artifacts for each and every release must be *signed*.
+* Your public key must be added to the KEYS file.
+* Your public key should also be cross-signed by other Apache committers (this can be done at key signing parties at
+ApacheCon, for instance).
+* Make sure you have the correct maven configuration in `~/.m2/settings.xml`.
+* You may want to get familiar with the release settings in the parent Apache POM.
+* Make sure you are using the expected supported Java version.
+* The `-Prelease` Maven profile cross-compiles the native `camel-x64.exe` and `camel-arm64.exe`
+Windows bootstraps using the `x86_64-w64-mingw32-clang` and `aarch64-w64-mingw32-clang` compilers
+from https://github.com/mstorsjo/llvm-mingw/releases/tag/20260616[llvm-mingw 20260616]. For a
+local release, install that toolchain and add its `bin/` directory to `PATH`; a missing toolchain
+causes a loud build failure (never a silent skip). The CI snapshot-deploy pipeline
+(`Jenkinsfile.deploy`) reuses an agent-provided toolchain when it is already on `PATH` and
+otherwise downloads the pinned, SHA256-verified copy automatically, so no manual provisioning of
+the Jenkins agents is required.
+
+[[ReleaseGuide-GPG]]
+== GPG setup
+
+NOTE: this step is required and is the same whether you're releasing the main Camel project or any of the subproject (eg, camel-k, camel-quarkus, ...).
+
+Here some quick notes about how to configure the GPG key (this will be required just once, typically the first time you do a release). If you're on a Linux distribution, you should have `gpg` binary available: try with `gpg --version`.
+
+=== Create a new GPG key
+
+[source,bash]
+----
+gpg --full-gen-key
+----
+
+This command will prompt a series of requests you'll need to fill. Have a look at the procedure described in https://cwiki.apache.org/confluence/display/PEGASUS/Configure+GPG+key[another Apache project page] for more details.
+
+Once you have created your key, it is convenient you add it to the `KEYS` file in root Camel github repository. IMPORTANT: always export the GPG key to the main project, even if the release concerns a Camel subproject.
+
+[source,bash]
+----
+gpg --list-sigs "pcongiusti@apache.org" >> KEYS && gpg --armor --export "pcongiusti@apache.org" >> KEYS
+----
+
+In order to verify you haven't introduced any change which is breaking the integrity of the file, you need to make sure that an import is working correctly. To validate that you need to run:
+
+[source,bash]
+----
+gpg --import-options show-only --verbose --import --dry-run KEYS
+----
+
+Check that all the keys are listed. Just check that the latest entry you've added is listed and that will be enough. At this stage you should commit the change and provide a PR to the project with the changes done in the KEYS file.
+
+=== Sync GPG keys
+
+Everytime there is a change in the source GPG keys on the main project you need to synchronize with the dist Camel project, in order to correctly provide the KEYS file to the expected location. You need to use `svn` tool and authenticate with your Apache credentials. Once it's done you can proceed like the following:
+
+[source,bash]
+----
+svn checkout https://dist.apache.org/repos/dist/release/camel camel-dist
+cd camel-dist
+cp /path/to/repo/camel/KEYS . # replace the path with your main project repository
+svn commit -m "Add GPG key for Your Name"
+----
+
+The change will be applied to the `dist` repository and after a few minutes will be synchronized with the https://downloads.apache.org/camel/ public repository which is the one we use to provide the GPG KEYS. After every change in this file it would be convenient to send a short email to dev@camel.apache.org to let everybody know about the new addition.
+
+=== Promote the GPG key publicly
+
+You also need to recover your fingerprint and copy to the https://id.apache.org account:
+
+[source,bash]
+----
+$ gpg --fingerprint
+
+pub   rsa4096 2023-05-26 [SC]
+      xyzz accc brrr dsad 1234  1234 1234 1234 1234 1234    <-- This is the fingerprint!
+uid           [ultimate] Pasquale Congiusti (gpg key) <pcongiusti@apache.org>
+sub   rsa4096 2023-05-26 [E]
+----
+
+Once this step is over, you will need to send your GPG key to certain serves used later when verifying the signed pushed artifacts:
+
+[source,bash]
+----
+$ gpg -k
+
+pub   rsa4096 2023-05-26 [SC]
+      1234123412341234123412341132132131312123            <-- This is the key you need!
+uid           [ultimate] Pasquale Congiusti (gpg key) <pcongiusti@apache.org>
+sub   rsa4096 2023-05-26 [E]
+
+gpg --keyserver hkp://keyserver.ubuntu.com --send-keys 1234123412341234123412341132132131312123
+gpg --keyserver hkp://keys.openpgp.org --send-keys 1234123412341234123412341132132131312123
+----
+
+Now you can proceed with the release.
+
+[[ReleaseGuide-MavenSetup]]
+== Maven Setup
+Before you deploy anything to the https://repository.apache.org[Apache Nexus repository] using Maven, you should
+configure your `~/.m2/settings.xml` file so that the file permissions of the deployed artifacts are group-writable.
+If you do not do this, other developers will not be able to overwrite your SNAPSHOT releases with newer versions.
+
+The settings follow the guidelines used by the Maven project. Please pay particular attention to the
+http://maven.apache.org/guides/mini/guide-encryption.html[password encryption recommendations].
+
+[source,xml]
+----
+<settings>
+  ...
+  <servers>
+    <!-- Per http://maven.apache.org/developers/committer-settings.html -->
+
+    <!-- To publish a snapshot of some part of Maven -->
+    <server>
+      <id>apache.snapshots.https</id>
+      <username> <!-- YOUR APACHE LDAP USERNAME --> </username>
+      <password> <!-- YOUR APACHE LDAP PASSWORD --> </password>
+    </server>
+    <!-- To publish a website of some part of Maven -->
+    <server>
+      <id>apache.website</id>
+      <username> <!-- YOUR APACHE LDAP USERNAME --> </username>
+      <filePermissions>664</filePermissions>
+      <directoryPermissions>775</directoryPermissions>
+    </server>
+    <!-- To stage a release of some part of Maven -->
+    <server>
+      <id>apache.releases.https</id>
+      <username> <!-- YOUR APACHE LDAP USERNAME --> </username>
+      <password> <!-- YOUR APACHE LDAP PASSWORD --> </password>
+    </server>
+    <!-- To stage a website of some part of Maven -->
+    <server>
+      <id>stagingSite</id> <!-- must match hard-coded repository identifier in site:stage-deploy -->
+      <username> <!-- YOUR APACHE LDAP USERNAME --> </username>
+      <filePermissions>664</filePermissions>
+      <directoryPermissions>775</directoryPermissions>
+    </server>
+
+  </servers>
+  ...
+  <profiles>
+    <profile>
+      <id>release</id>
+      <properties>
+        <gpg.useagent>false</gpg.useagent>
+        <gpg.passphrase><!-- YOUR GPG PASSPHRASE --></gpg.passphrase>
+        <test>false</test>
+      </properties>
+    </profile>
+
+  </profiles>
+...
+</settings>
+----
+
+[[ReleaseGuide-CreatingNewLTSBranch]]
+== Creating a New LTS Branch
+
+When creating a new LTS release branch (e.g., `camel-4.22.x`), the following additional steps are required beyond the normal branch creation:
+
+. Add branch protection in `.asf.yaml` (on the `main` branch):
++
+The `.asf.yaml` file in the `main` branch controls GitHub branch protection for the entire repository.
+Add the new branch to the `protected_branches` section to prevent force pushes and accidental branch deletion:
++
+[source,yaml]
+----
+github:
+  protected_branches:
+    main: {}
+    camel-4.14.x: {}
+    camel-4.18.x: {}
+    camel-4.22.x: {}   # <-- add new LTS branch here
+----
++
+NOTE: `.asf.yaml` does not support wildcard patterns — each branch must be listed explicitly.
+Only the `.asf.yaml` on the default branch (`main`) is used for repository-level settings like branch protection.
+
+. Remove branch protection for EOL branches:
++
+When an LTS branch reaches end of life, remove it from the `protected_branches` section in `.asf.yaml`.
+
+[[ReleaseGuide-CreatingTheRelease-Camel]]
+== Creating the Release
+
+Complete the following steps to create a new Camel release:
+
+. Grab the latest source from Git, checkout the target branch (`BRANCH_NAME`) to build from, and create a release branch off of that branch:
+
+
+  $ git clone https://git-wip-us.apache.org/repos/asf/camel.git
+  $ cd camel
+  $ git checkout BRANCH_NAME
+  $ git checkout -b release/NEW-VERSION
+
+. Perform a license check with http://creadur.apache.org/rat/apache-rat-plugin[Apache Rat]:
+
+
+  ./mvnw -e org.apache.rat:apache-rat-plugin:check
+  grep -e ' !?????' target/rat.txt
+
+
+*  The latter command will provide a list of all files without valid license headers.
+  Ideally this list is empty, otherwise fix the issues by adding valid license headers and rerun the above commands before
+  proceeding with the next step.
+
+. Do a release dry run to check for problems:
+
+
+  ./mvnw release:prepare -DdryRun -Prelease
+
+
+* The release plugin will prompt for a release version, an SCM tag and the next release version.
+
+*  Use a three digit release version of the form: `MAJOR.MINOR.PATCH`, e.g. `3.0.0`.
+
+*  For the tag use a string of the form: `camel-MAJOR.MINOR.PATCH`, e.g. `camel-3.0.0`.
+
+*  For the next version increase the patch version and append `-SNAPSHOT`, e.g. `3.0.1-SNAPSHOT`.
+
+* Make sure to check the generated signature files:
+
+
+  $ gpg --verify core/target/core-4.24.0-SNAPSHOT.pom.asc
+  gpg: assuming signed data in 'core/target/core-4.24.0-SNAPSHOT.pom'
+  gpg: Signature made Thu 08 Jan 2026 10:07:47 AM CET
+  gpg:                using EDDSA key D5A8412A12BFEBD9C7362CD8CED552456D5000FB
+  gpg: Good signature from "Aurélien Pupier <apupier@apache.org>" [ultimate]
+
+
+. Prepare the release:
+
+* First clean up the dry run results:
+
+
+  $ ./mvnw release:clean -Prelease
+
+
+* Next prepare the release:
+
+
+  $ ./mvnw release:prepare -Prelease
+
+
+*  This command will:
+.. Set the release version, build and tag it.
+.. Bump all POMs to the next development SNAPSHOT version.
+.. Run an additional `install` pass (the `completionGoals`) to regenerate all
+   `src/generated/` metadata files (JSON descriptors, configurer sources,
+   endpoint-dsl, etc.) that embed the project version.
+.. Commit the regenerated files together with the SNAPSHOT version POMs in a
+   single "prepare for next development iteration" commit.
++
+The regeneration step eliminates the manual "refresh PR" that was previously
+required after every release to bring `src/generated/` up to date (CAMEL-23376).
+
+. Perform the release and publish to the Apache staging repository:
+
+
+  $ ./mvnw release:perform -Prelease
+
+. Stage the WinGet payload in the Apache development distribution repository:
+
+* `release:perform` builds the non-attached WinGet ZIP in its release checkout. Prepare the
+candidate with the same candidate number used in the vote:
+
+  cd ${CAMEL_ROOT_DIR}/etc/scripts
+  ./stage-winget-distro.sh <Camel version> <candidate number> \
+    ${CAMEL_ROOT_DIR}/target/checkout/dsl/camel-jbang/camel-launcher/target/camel-launcher-<Camel version>-winget-bin.zip
+
+* Review the printed `svn status`, commit the working copy only after checking the ZIP, `.asc`,
+and `.sha512`, and include the resulting `dist/dev` candidate URL together with the Nexus staging
+repository URL in the vote email. The WinGet ZIP is not present in the Nexus staging repository.
+
+* The script prints the candidate's SHA-512 digest. **Include it in the vote email**: promotion
+requires it, because the candidate number on its own cannot distinguish the approved candidate from
+a superseded one (each RC directory carries its own self-consistent `.sha512` and `.asc`).
+
+
+. Close the Apache staging repository:
+
+* Login to https://repository.apache.org using your Apache LDAP credentials.
+Click on "Staging Repositories". Then select "org.apache.camel-xxx" in the list of repositories, where xxx represents
+your username and ip.
+Click "Close" on the toolbar above.
+This will close the repository from future deployments and make it available for others to view.
+If you are staging multiple releases together, skip this step until you have staged everything.
+Enter the name and version of the artifact being released in the "Description" field and then click "Close".
+This will make it easier to identify it later.
+
+. Verify staged artifacts:
+
+* If you click on your repository, a tree view will appear below.
+You can then browse the contents to ensure the artifacts are as you expect them.
+Pay particular attention to the existence of *.asc (signature) files.
+If you don't like the content of the repository, right-click your repository and choose "Drop".
+You can then roll back your release and repeat the process.
+Note the repository URL, you will need this in your vote email.
+
+[[ReleaseGuide-CreatingTheRelease-Camel-spring-boot]]
+== Creating the Release for camel-spring-boot
+
+Complete the following steps to create a new Camel-spring-boot release:
+
+. Grab the latest source from Git and checkout the target branch (`BRANCH_NAME`) to build from:
+
+  $ git clone https://git-wip-us.apache.org/repos/asf/camel-spring-boot.git
+  $ cd camel
+  $ git checkout BRANCH_NAME
+
+. From Camel 3.3.0 ahead, the camel-spring-boot project uses camel-dependencies as parent.
+You'll need to set the version here https://github.com/apache/camel-spring-boot/blob/master/pom.xml#L26
+To the version released from the main Camel repository as the first step.
+
+. Perform a license check with http://creadur.apache.org/rat/apache-rat-plugin[Apache Rat]:
+
+  ./mvnw -e org.apache.rat:apache-rat-plugin:check
+  grep -e ' !?????' target/rat.txt
+
+*  The latter command will provide a list of all files without valid license headers.
+  Ideally this list is empty, otherwise fix the issues by adding valid license headers and rerun the above commands before
+  proceeding with the next step.
+
+. You already have built the main camel repo for releasing, so you already have a final version in your local repository.
+Change the camel-version property in https://github.com/apache/camel-spring-boot/blob/master/pom.xml accordingly and commit.
+
+. Do a release dry run to check for problems:
+
+  ./mvnw release:prepare -DdryRun -Prelease
+
+ * The release plugin will prompt for a release version, an SCM tag and the next release version.
+
+*  Use a three digit release version of the form: `MAJOR.MINOR.PATCH`, e.g. `3.0.0`.
+
+*  For the tag use a string of the form: `camel-MAJOR.MINOR.PATCH`, e.g. `camel-3.0.0`.
+
+*  For the next version increase the patch version and append `-SNAPSHOT`, e.g. `3.0.1-SNAPSHOT`.
+
+* Make sure to check the generated signature files:
+
+  $ gpg core/camel-spring-boot/target/camel-spring-boot-3.0.0-SNAPSHOT.jar.asc
+  gpg: assuming signed data in `core/camel-spring-boot/target/camel-spring-boot-3.0.0-SNAPSHOT.jar'
+  gpg: Signature made Sat 06 Apr 2019 03:58:01 AM PDT using RSA key ID 5942C049
+  gpg: Good signature from "Gregor Zurowski <gzurowski@apache.org>"
+
+. Prepare the release:
+
+* First clean up the dry run results:
+
+  $ ./mvnw release:clean -Prelease
+
+* Next prepare the release:
+
+  $ ./mvnw release:prepare -Prelease
+
+*  This command will create the tag and update all pom files with the given version number.
+
+. Perform the release and publish to the Apache staging repository:
+
+  $ ./mvnw release:perform -Prelease
+
+. Close the Apache staging repository:
+
+* Login to https://repository.apache.org using your Apache LDAP credentials.
+Click on "Staging Repositories". Then select "org.apache.camel-xxx" in the list of repositories, where xxx represents
+your username and ip.
+Click "Close" on the tool bar above.
+This will close the repository from future deployments and make it available for others to view.
+If you are staging multiple releases together, skip this step until you have staged everything.
+Enter the name and version of the artifact being released in the "Description" field and then click "Close".
+This will make it easier to identify it later.
+
+. Verify staged artifacts:
+
+* If you click on your repository, a tree view will appear below.
+You can then browse the contents to ensure the artifacts are as you expect them.
+Pay particular attention to the existence of *.asc (signature) files.
+If you don't like the content of the repository, right-click your repository and choose "Drop".
+You can then roll back your release and repeat the process.
+Note the repository URL, you will need this in your vote email.
+
+. Once the release has been voted
+
+* Login to https://repository.apache.org using your Apache LDAP credentials.
+Click on "Staging Repositories". Then select "org.apache.camel-xxx" in the list of repositories, where xxx represents
+your username and ip.
+Click "Release" on the tool bar above.
+This will release the artifacts.
+
+[[ReleaseGuide-PublishingTheRelease-Camel]]
+== Publishing the Release
+
+. Once the release has been voted:
+
+* Login to https://repository.apache.org using your Apache LDAP credentials.
+Click on "Staging Repositories". Then select "org.apache.camel-xxx" in the list of repositories, where xxx represents
+your username and IP.
+Click "Release" on the tool bar above.
+This will release the artifacts.
+
+. Perform a release in JIRA:
+
+* Release the version in JIRA: https://issues.apache.org/jira/plugins/servlet/project-config/CAMEL/versions
+
+. Copy distribution to Apache website:
+
+  cd ${CAMEL_ROOT_DIR}/etc/scripts
+  ./release-distro.sh <Camel version> <temp-directory> <WinGet candidate number> <WinGet SHA-512>
+
+* The script exports the voted WinGet ZIP, signature, and SHA-512 checksum from `dist/dev`, verifies
+them, and adds the exact files to the local `dist/release` working copy. It does not rebuild the ZIP.
+Review and commit the combined working copy using the commands printed by the script.
+
+* `<WinGet SHA-512>` is the digest from the vote email. Promotion aborts if the exported candidate
+does not match it, which is what stops a superseded RC from being promoted by mistake.
+
+* After the release is available from
+`https://archive.apache.org/dist/camel/apache-camel/<Camel version>/`, run the JReleaser package
+preparation. WinGet preparation fails until the archived ZIP is available and byte-identical to the
+approved local ZIP.
+
+* Remove the promoted candidate after the release copy is committed:
+
+  svn rm https://dist.apache.org/repos/dist/dev/camel/apache-camel/<Camel version>-rc<WinGet candidate number> \
+    -m "Remove promoted Apache Camel <Camel version> WinGet candidate"
+
+. Copy SBOMs to Apache website:
+
+  cd ${CAMEL_ROOT_DIR}/etc/scripts
+  ./release-sbom.sh <Camel version>
+
+. Remove the old distribution version from the Apache website:
+
+  svn rm https://dist.apache.org/repos/dist/release/camel/apache-camel/OLD_CAMEL_VERSION -m "Removed the old release"
+
+. Upload the new schema files (and the manual):
+
+  cd ${CAMEL_ROOT_DIR}/etc/scripts
+  ./release-website.sh <Camel version>
+
+. Merge the release branch back into the corresponding base branch (e.g., merge `release/3.2.0` into `camel-3.2.x`)
+
+  git checkout BASE_BRANCH
+  git pull
+  git merge --no-ff release/VERSION
+  git push
+
+. Delete the local and remote release branch:
+
+  git branch -D release/VERSION
+  git push origin --delete release/VERSION
+
+[[ReleaseGuide-PublishingCamelCli]]
+== Publishing camel-cli packages
+
+Once the `camel-launcher` binary artifacts (`camel-launcher-<version>-bin.tar.gz` / `.zip`) have
+been built and staged, `camel-publish.sh` drives the JReleaser-based publish to the camel-cli
+package destinations. It is a single resumable orchestrator, not something invoked destination by
+destination.
+
+  cd ${CAMEL_ROOT_DIR}/dsl/camel-jbang/camel-launcher/src/jreleaser/bin
+  ./camel-publish.sh <Camel version> --channel stable|lts [--lts-line X.Y]
+
+* `--channel lts` requires `--lts-line X.Y` (e.g. `--lts-line 4.18`) and targets a versioned
+Homebrew formula (`apache-camel@X.Y`); `--channel stable` targets the unversioned formula
+(`apache-camel`).
+* Required environment: `GITHUB_TOKEN`, `SDKMAN_CONSUMER_KEY`, `SDKMAN_CONSUMER_SECRET`,
+`CHOCO_API_KEY`.
+* The `homebrew-core` and `winget-pkgs` destinations push to your own fork, not upstream. Fork
+both repositories first (`gh repo fork homebrew/homebrew-core --clone=false` and
+`gh repo fork microsoft/winget-pkgs --clone=false`) and make sure the `FORK_REMOTE`/
+`CAMEL_PUB_FORK_REMOTE` git remote used by the script is configured before running it.
+
+The script publishes to destinations in this order: JReleaser package → Homebrew tap → Camel
+website → WinGet → Scoop → SDKMAN → Chocolatey. `--channel lts` skips Scoop and SDKMAN (no
+versioned Scoop manifest, and SDKMAN only tracks the latest stable release).
+
+Progress is recorded in `target/jreleaser/publish-state.json`; re-running the same command after a
+partial failure resumes from the first incomplete destination instead of repeating completed ones.
+The script never merges the PRs it opens against `homebrew-core` or `winget-pkgs` — merge timing
+for those is up to each project's own maintainers.
+
+[[Publish-xsd-schemas]]
+== Publish xsd schemas
+
+* On https://github.com/apache/camel-website/tree/main/static/schema the xsd related to cxf,spring-security and spring
+must be pushed to make them available to end users.
+
+[[Tagging-examples]]
+== Tagging examples
+
+These steps are optional, and they could be done later too.
+
+Once the release train (camel and camel-spring-boot) has been voted and published, there are some additional steps needed for the camel examples.
+
+. Camel-examples
+
+* On https://github.com/apache/camel-examples in the examples/pom.xml file, the following steps are necessary:
+
+* Update the camel-dependencies version to the version coming from the release-train
+
+* Update the `camel.version` properties to the version coming from the release-train
+
+* To be sure everything is fine, run:
+
+  $ ./mvnw clean install
+
+* Commit
+
+  $ git commit -a
+  $ git push origin master (or the branch related to the release, eg. camel-3.4.x)
+  $ git tag -a camel-examples-$version -m "$version"
+  $ git push origin camel-examples-$version
+
+* Now we pushed the tag, and we need to advance the version of the examples
+
+* Update the camel-dependencies version to the next version
+
+* Update the `camel.version` properties to the next version
+
+* Run the following command to advance the version in the examples
+
+  $ find . -type f -exec sed -i 's/$oldVersion/$newVersion/g' {} +
+
+* To be sure everything is fine, run:
+
+  $ ./mvnw clean install
+
+. Camel-spring-boot-examples
+
+* On https://github.com/apache/camel-spring-boot-examples in the examples/pom.xml file the following steps are necessary:
+
+* Update the camel-dependencies version to the version coming from the release-train
+
+* Update the `camel.version` properties to the version coming from the release-train
+
+* To be sure everything is fine, run:
+
+  $ ./mvnw clean install
+
+* Commit
+
+  $ git commit -a
+  $ git push origin master (or the branch related to the release, eg. camel-3.4.x)
+  $ git tag -a camel-spring-boot-examples-$version -m "$version"
+  $ git push origin camel-spring-boot-examples-$version
+
+* Now we pushed the tag, and we need to advance the version of the examples
+
+* Update the camel-dependencies version to the next version
+
+* Update the `camel.version` properties to the next version
+
+* Run the following command to advance the version in the examples
+
+  $ find . -type f -exec sed -i 's/$oldVersion/$newVersion/g' {} +
+
+* To be sure everything is fine, run:
+
+  $ ./mvnw clean install

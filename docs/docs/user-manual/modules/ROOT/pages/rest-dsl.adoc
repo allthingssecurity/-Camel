@@ -1,0 +1,697 @@
+= REST DSL
+
+Apache Camel offers a REST styled DSL.
+
+The intention is to allow end users to define REST services (hosted by Camel) using a
+REST style with verbs such as get, post, delete, etc.
+
+NOTE: From *Camel 4.6* onwards, the Rest DSL has been improved with a _contract-first_ approach using vanilla OpenAPI specification
+files. This is documented in the xref:rest-dsl-openapi.adoc[Rest DSL with OpenAPI contract first] page. This current page documents the
+_code-first_ Rest DSL that Camel provides for a long time.
+
+== How it works
+
+The Rest DSL is a facade that builds xref:components::rest-component.adoc[Rest] endpoints as
+consumers for Camel routes. The actual REST transport is leveraged by
+using Camel REST components such
+as xref:components::netty-http-component.adoc[Netty HTTP], xref:components::servlet-component.adoc[Servlet], and
+others that have native REST integration.
+
+== Components supporting Rest DSL
+
+The following Camel components support the Rest DSL:
+
+* xref:components::rest-component.adoc[camel-rest] *required* contains the base rest component needed by Rest DSL
+* xref:components::netty-http-component.adoc[camel-netty-http]
+* xref:components::jetty-component.adoc[camel-jetty]
+* xref:components::platform-http-component.adoc[camel-platform-http] (recommended)
+* xref:components::servlet-component.adoc[camel-servlet]
+* xref:components::undertow-component.adoc[camel-undertow]
+
+== Rest DSL
+
+Lets defines a REST service with the following url mappings:
+
+[width="100%",cols="25%,25%,25%,25%",options="header",]
+|===
+|Base Path |Uri template |Verb |Consumes
+|`_/say_` |`_/hello_` |`get` |_all_
+|`_/say_` |`_/bye_` |`get` |`application/json`
+|`_/say_` |`_/bye_` |`post` |_all_
+|===
+
+[tabs]
+====
+
+Java::
++
+To use the Rest DSL in Java DSL, then just do as with regular Camel routes by
+extending the `RouteBuilder` and define the routes in the `configure`
+method.
++
+A simple REST service can be defined as follows, where we use `rest()` to
+define the services as shown below:
++
+[source,java]
+----
+@Override
+public void configure() throws Exception {
+    rest("/say")
+        .get("/hello").to("direct:hello")
+        .get("/bye").consumes("application/json").to("direct:bye")
+        .post("/bye").to("mock:update");
+
+    from("direct:hello")
+        .transform().constant("Hello World");
+
+    from("direct:bye")
+        .transform().constant("Bye World");
+}
+----
++
+Notice that in the REST service we route directly to a Camel endpoint
+using `to()`. This is because the Rest DSL has a shorthand for
+routing directly to an endpoint using `to()`.
+
+XML::
++
+A simple REST service can be defined as follows, where we use `<rest>` to
+define the services as shown below:
++
+[source,xml]
+----
+  <rest path="/say">
+    <get path="/hello">
+      <to uri="direct:hello"/>
+    </get>
+    <get path="/bye" consumes="application/json">
+      <to uri="direct:bye"/>
+    </get>
+    <post path="/bye">
+      <to uri="mock:update"/>
+    </post>
+  </rest>
+  <route>
+    <from uri="direct:hello"/>
+    <transform>
+      <constant>Hello World</constant>
+    </transform>
+  </route>
+  <route>
+    <from uri="direct:bye"/>
+    <transform>
+      <constant>Bye World</constant>
+    </transform>
+  </route>
+----
+
+YAML::
++
+A simple REST service can be defined as follows, where we use `- rest:` to
+define the services as shown below:
++
+[source,yaml]
+----
+- rest:
+    path: "/say"
+    get:
+      - path: "/hello"
+        to: "direct:hello"
+      - path: "/bye"
+        consumes: "application/json"
+        to: "direct:bye"
+    post:
+      - path: "/bye"
+        to: "direct:update"
+- route:
+    from:
+      uri: direct:hello
+      steps:
+        - transform:
+            expression:
+              constant:
+                expression: Hello World
+- route:
+    from:
+      uri: direct:bye
+      steps:
+        - transform:
+            expression:
+              constant:
+                expression: Bye World
+----
+====
+
+== Returning an HTTP status code
+
+A rest service answers with the HTTP status `200` by default (or `204` when there is no body). To answer with
+another status, such as a `404` for something that is not found or a `409` for a conflict, set the
+`CamelHttpResponseCode` header (`Exchange.HTTP_RESPONSE_CODE` in Java) in the route the service calls; the message
+body becomes the response body. A path parameter such as `+{sku}+` arrives as a header of the same name:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+rest("/stock")
+    .get("/{sku}").to("direct:one-sku");
+
+from("direct:one-sku")
+    .choice()
+        .when(simple("${header.sku} == 'CAMEL-MUG'"))
+            .setBody(constant("{\"sku\": \"CAMEL-MUG\", \"qty\": 42}"))
+        .otherwise()
+            .setHeader(Exchange.HTTP_RESPONSE_CODE, constant(404))
+            .setBody(simple("{\"error\": \"unknown SKU ${header.sku}\"}"))
+    .end();
+----
+
+XML::
++
+[source,xml]
+----
+<rest path="/stock">
+  <get path="/{sku}">
+    <to uri="direct:one-sku"/>
+  </get>
+</rest>
+
+<route>
+  <from uri="direct:one-sku"/>
+  <choice>
+    <when>
+      <simple>${header.sku} == 'CAMEL-MUG'</simple>
+      <setBody>
+        <constant>{"sku": "CAMEL-MUG", "qty": 42}</constant>
+      </setBody>
+    </when>
+    <otherwise>
+      <setHeader name="CamelHttpResponseCode">
+        <constant>404</constant>
+      </setHeader>
+      <setBody>
+        <simple>{"error": "unknown SKU ${header.sku}"}</simple>
+      </setBody>
+    </otherwise>
+  </choice>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- rest:
+    path: /stock
+    get:
+      - path: "/{sku}"
+        to: direct:one-sku
+- route:
+    from:
+      uri: direct:one-sku
+      steps:
+        - choice:
+            when:
+              - expression:
+                  simple:
+                    expression: "${header.sku} == 'CAMEL-MUG'"
+                steps:
+                  - setBody:
+                      expression:
+                        constant:
+                          expression: '{"sku": "CAMEL-MUG", "qty": 42}'
+            otherwise:
+              steps:
+                - setHeader:
+                    name: CamelHttpResponseCode
+                    expression:
+                      constant:
+                        expression: "404"
+                - setBody:
+                    expression:
+                      simple:
+                        expression: '{"error": "unknown SKU ${header.sku}"}'
+----
+====
+
+When the route throws an exception that is not handled, the client gets a `500`. To answer with a specific
+status for an exception, handle it in `onException` and set `CamelHttpResponseCode` there.
+
+== Using a base path
+
+The REST DSL allows defining a base path to help applying the _"don't repeat yourself"_ (DRY) practice.
+For example, to define a customer path, we can set the base path in
+`rest("/customer")` and then provide the uri templates in the verbs, as
+shown below:
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+rest("/customers/")
+    .get("/{id}").to("direct:customerDetail")
+    .get("/{id}/orders").to("direct:customerOrders")
+    .post("/neworder").to("direct:customerNewOrder");
+----
+
+XML::
++
+[source,xml]
+----
+<rest path="/customers/">
+  <get path="/{id}">
+    <to uri="direct:customerDetail"/>
+  </get>
+  <get path="/{id}/orders">
+    <to uri="direct:customerOrders"/>
+  </get>
+  <post path="/neworder">
+    <to uri="direct:customerNewOrder"/>
+  </post>
+</rest>
+----
+
+YAML::
++
+[source,yaml]
+----
+- rest:
+    path: "/customers/"
+    get:
+      - path: "/{id}"
+        to: "direct:customerDetails"
+      - path: "/{id}/orders"
+        to: "direct:customerOrders"
+    post:
+      - path: "/neworder"
+        to: "direct:customerNewOrder"
+----
+====
+
+TIP: The REST DSL will take care of duplicate path separators when using base
+path and uri templates. In the example above the rest base path ends
+with a slash `/` and the verb starts with a slash `/`.
+Camel will take care of this and remove the duplicated slash.
+
+It is not required to use both base path and uri templates. You can omit
+the base path and define the base path and uri template in the verbs
+only. The example above can be defined as:
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+rest()
+    .get("/customers/{id}").to("direct:customerDetail")
+    .get("/customers/{id}/orders").to("direct:customerOrders")
+    .post("/customers/neworder").to("direct:customerNewOrder");
+----
+
+XML::
++
+[source,xml]
+----
+<rest>
+  <get path="/customers/{id}">
+    <to uri="direct:customerDetail"/>
+  </get>
+  <get path="/customers/{id}/orders">
+    <to uri="direct:customerOrders"/>
+  </get>
+  <post path="/customers/neworder">
+    <to uri="direct:customerNewOrder"/>
+  </post>
+</rest>
+----
+
+YAML::
++
+[source,yaml]
+----
+- rest:
+    get:
+      - path: "/customers/{id}"
+        to: "direct:customerDetails"
+      - path: "/customers/{id}/orders"
+        to: "direct:customerOrders"
+    post:
+      - path: "/customers/neworder"
+        to: "direct:customerNewOrder"
+----
+====
+
+You can combine path parameters to build complex expressions.
+
+For example the following defines a path for a getting an item as if it was a file syntax:
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+ rest("items/")
+     .get("{id}/{filename}.{content-type}")
+     .to("direct:item");
+----
+
+XML::
++
+[source,xml]
+----
+<rest path="items/">
+    <get path="{id}/{filename}.{content-type}">
+        <to uri="direct:item"/>
+    </get>
+</rest>
+----
+
+YAML::
++
+[source,yaml]
+----
+- rest:
+    path: "items/"
+    get:
+      - path: "{id}/{filename}.{content-type}"
+        to: "direct:item"
+----
+====
+
+== Managing Rest services
+
+Each of the rest services becomes a Camel route, so in the first example,
+we have 2 x get and 1 x post REST service, which each becomes a Camel route.
+
+This makes it _the same_ from Apache Camel to manage and run these
+services, as they are just Camel routes. This means any tooling and API
+today that deals with Camel routes, also work with the REST services.
+
+NOTE: To use JMX with Camel then `camel-management` JAR must be included in the classpath.
+
+This means you can use JMX to stop/start routes, and also get the JMX
+metrics about the routes, such as the number of messages processed, and their
+performance statistics.
+
+There is also a Rest Registry JMX MBean that contains a registry of all
+REST services that has been defined.
+
+== Inline Rest DSL as a single route
+
+IMPORTANT: Camel 4.4 or older has inline-routes disabled by default. Camel 4.5 or newer has inline-routes enabled by default.
+
+Each of the rest services becomes a Camel route, and this means, that if the rest
+service is calling another Camel route via `direct`, which is a widespread practice.
+This means that each rest service then becomes two routes. This can become harder to manage
+if you have many rest services.
+
+When you use `direct` endpoints then you can enable Rest DSL to automatically _inline_ the direct
+route in the rest route, meaning that there is only one route per rest service.
+
+WARNING: When using inline-routes, then each REST endpoint should link 1:1 to a unique `direct` endpoint.
+The linked _direct_ routes are inlined and therefore does not **exists** as independent routes, and
+they cannot be called from other regular Camel routes. In other words the inlined routes are essentially
+moved inside the rest-dsl and does not exist as a route. See more detils further below.
+A `direct` route that is linked from more than one REST endpoint is not inlined, but stays a route of its own
+that the REST endpoints call.
+
+To do this you *MUST* use `direct` endpoints, and each endpoint must be unique name per service.
+And the option `inlineRoutes` must be enabled.
+
+For example, in the Java DSL below we have enabled inline routes and each rest service
+uses `direct` endpoints with unique names.
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+restConfiguration().inlineRoutes(true);
+
+rest("/customers/")
+    .get("/{id}").to("direct:customerDetail")
+    .get("/{id}/orders").to("direct:customerOrders")
+    .post("/neworder").to("direct:customerNewOrder");
+----
+
+XML::
++
+[source,xml]
+----
+<restConfiguration inlineRoutes="true"/>
+
+<rest>
+  <get path="/customers/{id}">
+    <to uri="direct:customerDetail"/>
+  </get>
+  <get path="/customers/{id}/orders">
+    <to uri="direct:customerOrders"/>
+  </get>
+  <post path="/customers/neworder">
+    <to uri="direct:customerNewOrder"/>
+  </post>
+</rest>
+----
+
+YAML::
++
+[source,yaml]
+----
+- restConfiguration:
+    inlineRoutes: true
+- rest:
+    get:
+      - path: "/customers/{id}"
+        to: "direct:customerDetails"
+      - path: "/customers/{id}/orders"
+        to: "direct:customerOrders"
+    post:
+      - path: "/customers/neworder"
+        to: "direct:customerNewOrder"
+----
+====
+
+If you use Camel Main, Camel Spring Boot, Camel Quarkus or Camel CLI, you can also enable this in `application.properties` such as:
+
+[source,properties]
+----
+camel.rest.inline-routes = true
+----
+
+Notice the REST services above each use a unique 1:1 linked direct endpoint (direct:customerDetail, direct:customerOrders direct:customerNewOrder).
+This means that you cannot call these routes from another route such as the following would not function:
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+from("kafka:new-order")
+   .to("direct:customerNewOrder");
+----
+
+XML::
++
+[source,xml]
+----
+<route>
+    <from uri="kafka:new-order"/>
+    <to uri="direct:customerNewOrder"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: kafka:new-order
+      steps:
+        - to:
+            uri: direct:customerNewOrder
+----
+====
+
+So if you desire to call common routes from both Rest DSL and other regular Camel routes
+then keep these in separate routes as shown:
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+restConfiguration().inlineRoutes(true);
+
+rest("/customers/")
+    .get("/{id}").to("direct:customerDetail")
+    .get("/{id}/orders").to("direct:customerOrders")
+    .post("/neworder").to("direct:customerNewOrder");
+
+from("direct:customerNewOrder")
+  // do some stuff here
+  .to("direct:commonCustomerNewOrder"); // call common route
+
+from("direct:commonCustomerNewOrder")
+  // do stuff here
+  .log("Created new order");
+
+from("kafka:new-order")
+   .to("direct:commonCustomerNewOrder"); // make sure to call the common route
+----
+
+XML::
++
+[source,xml]
+----
+<restConfiguration inlineRoutes="true"/>
+
+<rest path="/customers/">
+    <get path="/{id}">
+        <to uri="direct:customerDetail"/>
+    </get>
+    <get path="/{id}/orders">
+        <to uri="direct:customerOrders"/>
+    </get>
+    <post path="/neworder">
+        <to uri="direct:customerNewOrder"/>
+    </post>
+</rest>
+
+<routes>
+    <route>
+        <from uri="direct:customerNewOrder"/>
+        <to uri="direct:commonCustomerNewOrder"/>
+    </route>
+    <route>
+        <from uri="direct:commonCustomerNewOrder"/>
+        <log message="Created new order"/>
+    </route>
+    <route>
+        <from uri="kafka:new-order"/>
+        <to uri="direct:commonCustomerNewOrder"/>
+    </route>
+</routes>
+----
+
+YAML::
++
+[source,yaml]
+----
+- restConfiguration:
+    inlineRoutes: true
+- rest:
+    path: "/customers/"
+    get:
+      - path: "/{id}"
+        to: "direct:customerDetails"
+      - path: "/{id}/orders"
+        to: "direct:customerOrders"
+    post:
+      - path: "/neworder"
+        to: "direct:customerNewOrder"
+- route:
+    from:
+      uri: direct:customerNewOrder
+      steps:
+        - to:
+            uri: direct:commonCustomerNewOrder
+- route:
+    from:
+      uri: direct:commonCustomerNewOrder
+      steps:
+        - log:
+            message: Created new order
+- route:
+    from:
+      uri: kafka:new-order
+      steps:
+        - to:
+            uri: direct:commonCustomerNewOrder
+----
+====
+
+Notice how the common shared route is separated into the route `direct:commonCustomerNewOrder`.
+Which can be called from both Rest DSL and regular Camel routes.
+
+== Disabling REST services
+
+While developing REST services using Rest DSL, you may want to temporary disabled some REST endpoints,
+which you can do using `disabled` as shown in the following.
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+rest("/customers/")
+    .get("/{id}").to("direct:customerDetail")
+    .get("/{id}/orders").to("direct:customerOrders").disabled("{{ordersEnabled}}")
+    .post("/neworder").to("direct:customerNewOrder").disabled();
+----
+
+XML::
++
+[source,xml]
+----
+<rest>
+  <get path="/customers/{id}">
+    <to uri="direct:customerDetail"/>
+  </get>
+  <get path="/customers/{id}/orders" disabled="{{ordersEnabled}}">
+    <to uri="direct:customerOrders"/>
+  </get>
+  <post path="/customers/neworder" disabled="true">
+    <to uri="direct:customerNewOrder"/>
+  </post>
+</rest>
+----
+
+YAML::
++
+[source,yaml]
+----
+- rest:
+    get:
+      - path: "/customers/{id}"
+        to: "direct:customerDetails"
+      - path: "/customers/{id}/orders"
+        to: "direct:customerOrders"
+        disabled: "{{ordersEnabled}}"
+    post:
+      - path: "/customers/neworder"
+        to: "direct:customerNewOrder"
+        disabled: "true"
+----
+====
+
+In this example the last two REST endpoints are configured with `disabled`.
+You can use xref:manual:ROOT:using-propertyplaceholder.adoc[Property Placeholder] to
+let an external configuration determine if the REST endpoint is disabled or not.
+In this example the `/customers/\{id}/orders` endpoint is disabled via a placeholder.
+The last REST endpoint is hardcoded to be disabled.
+
+== More Information
+
+For detailed documentation on specific topics, see the following sub-pages:
+
+* xref:rest-dsl-binding.adoc[Binding and Configuration] — POJO binding, Jackson JSON features, CORS, OAuth Bearer token validation
+* xref:rest-dsl-validation.adoc[Error Handling and Validation] — Custom error messages, request/response validation, parameter defaults
+* xref:rest-dsl-openapi.adoc[Contract First with OpenAPI] — Using vanilla OpenAPI specification files with Rest DSL

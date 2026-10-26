@@ -1,0 +1,15 @@
+= Message Exchange
+
+A request message and its corresponding reply or exception message is represented in Camel using the `Exchange` interface.
+This interface provides an abstraction for this pattern of communication between systems.
+The presence of a reply message is optional and depends on the xref:exchange-pattern.adoc[exchange pattern] used in the integration.
+Thanks to this, Apache Camel can support different integration patterns such as:
+
+* xref:components:eips:event-message.adoc[Event Messages]: messages that have only an inbound message
+* xref:components:eips:requestReply-eip.adoc[Request and Reply]: messages that have an inbound and an outbound message.
+
+== Learn More About Exchanges
+
+* xref:manual::exchange-pooling.adoc[Exchange Pooling]
+* xref:manual::exchange-pattern.adoc[Message Exchange Pattern]
+* xref:manual::using-exchange-pattern-annotations.adoc[Using Message Exchange Pattern Annotations]

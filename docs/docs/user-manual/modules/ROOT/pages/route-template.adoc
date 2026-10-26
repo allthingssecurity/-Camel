@@ -1,0 +1,767 @@
+= Route Template
+
+A Route template is as its name implies a template for a route, which is used
+to create routes from a set of input parameters. In other words,
+route templates are parameterized routes.
+
+_Route template_ + _input parameters_ => _route_
+
+From a route template, you can create one or more routes.
+
+== Defining route templates in the DSL
+
+Route templates are to be defined in the DSL (just like routes) as shown in the following:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+public class MyRouteTemplates extends RouteBuilder {
+
+    @Override
+    public void configure() throws Exception {
+        // create a route template with the given name
+        routeTemplate("myTemplate")
+            // here we define the required input parameters (can have default values)
+            .templateParameter("name")
+            .templateParameter("greeting")
+            .templateParameter("myPeriod", "3s")
+            // here comes the route in the template
+            // notice how we use {{name}} to refer to the template parameters
+            // we can also use {{propertyName}} to refer to property placeholders
+            .from("timer:{{name}}?period={{myPeriod}}")
+                .setBody(simple("{{greeting}} ${body}"))
+                .log("${body}");
+    }
+}
+----
+
+XML::
++
+[source,xml]
+----
+  <routeTemplate id="myTemplate">
+    <templateParameter name="name"/>
+    <templateParameter name="greeting"/>
+    <templateParameter name="myPeriod" defaultValue="3s"/>
+    <route>
+      <from uri="timer:{{name}}?period={{myPeriod}}"/>
+      <setBody><simple>{{greeting}} ${body}</simple></setBody>
+      <log message="${body}"/>
+    </route>
+  </routeTemplate>
+----
+
+YAML::
++
+[source,yaml]
+----
+- routeTemplate:
+    id: "myTemplate"
+    parameters:
+      - name: "name"
+      - name: "greeting"
+      - name: "myPeriod"
+        defaultValue: "3s"
+    from:
+      uri: "timer:{{name}}"
+      parameters:
+        period: "{{myPeriod}}"
+      steps:
+        - setBody:
+            expression:
+              simple:
+                expression: "{{greeting}} ${body}"
+        - log:
+            message: "${body}"
+----
+====
+
+In the examples above, there was one route template, but you can define as many as you want.
+Each template must have a unique id. 
+
+=== Template parameters
+
+The template parameters are used for defining the parameters
+the template accepts. In the example, there are three parameters: `_name_`, `_greeting_`, and `_myPeriod_`. The first two
+parameters are mandatory, whereas `_myPeriod_` is optional as it has a default value of 3s.
+
+The template parameters are then used in the route as regular property placeholders with the `{{ }}` syntax.
+Notice how we use `{\{name}}` and `{\{greeting}}` in the timer endpoint and the simple language.
+
+The route can use regular property placeholders from a properties file as well:
+
+.Application Properties
+[source,properties]
+----
+greeting = Davs
+----
+
+Then Camel would normally have used this value `Davs` when creating the route. However, as the route template
+has defined a template parameter with the same name `greeting` then a value must be provided when
+creating routes from the template.
+
+Template parameters take precedence over regular property placeholders.
+
+=== Special Property Placeholders
+
+Template property placeholders are placed between two curly braces:
+
+[source,text]
+----
+{{myProperty}}
+----
+
+To indicate that a template parameter is optional, and can have a `null` value, a question mark (`?`) must be used, as shown:
+
+[source,text]
+----
+{{?myProperty}}
+----
+
+For example in the following route the `replyTo` queue for the JMS endpoint is optional. So if the value is `null` then Camel
+will not assign `null` as `replyTo` in the JMS endpoint, and instead leave it as if was never configured; for example this allows the option to use its default setting.
+
+[tabs]
+====
+
+Java::
++
+Notice how we use `?` in the replyTo option below:
++
+[source,java]
+----
+from("timer:{{name}}?period={{myPeriod}}")
+    .setBody(simple("{{greeting}} ${body}"))
+    .to("jms:myqueue?replyTo={{?replyToQueue}}");
+----
+
+XML::
++
+Notice how we use `?` in the replyTo option below:
++
+[source,xml]
+----
+<route>
+    <from uri="timer:{{name}}?period={{myPeriod}}"/>
+    <setBody>
+        <simple>{{greeting}} ${body}</simple>
+    </setBody>
+    <to uri="jms:myqueue?replyTo={{?replyToQueue}}"/>
+</route>
+----
+
+YAML::
++
+Notice how we use `?` in the replyTo option below:
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: "timer:{{name}}"
+      parameters:
+        period: "{{myPeriod}}"
+      steps:
+        - setBody:
+            expression:
+              simple:
+                expression: "{{greeting}} ${body}"
+        - to:
+            uri: "jms:myqueue"
+            parameters:
+              replyTo: "{{?replyToQueue}}"
+----
+====
+
+IMPORTANT: In case no replyToQueue property is provided when creating the template the option replyTo is just ignored.
+
+==== Optional endpoint URIs
+
+The `{{?}}` syntax can also be used for the entire endpoint URI.
+When the template parameter is not provided, the step is silently skipped (removed from the route).
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+routeTemplate("myTemplate")
+    .templateParameter("name")
+    .templateOptionalParameter("optionalUri")
+    .from("direct:{{name}}")
+    .to("{{?optionalUri}}")
+    .to("mock:end");
+----
+
+XML::
++
+[source,xml]
+----
+<routeTemplate id="myTemplate">
+    <templateParameter name="name"/>
+    <templateParameter name="optionalUri" required="false"/>
+    <route>
+        <from uri="direct:{{name}}"/>
+        <to uri="{{?optionalUri}}"/>
+        <to uri="mock:end"/>
+    </route>
+</routeTemplate>
+----
+
+YAML::
++
+[source,yaml]
+----
+- routeTemplate:
+    id: "myTemplate"
+    parameters:
+      - name: "name"
+      - name: "optionalUri"
+        required: false
+    from:
+      uri: "direct:{{name}}"
+      steps:
+        - to:
+            uri: "{{?optionalUri}}"
+        - to:
+            uri: "mock:end"
+----
+====
+
+When creating a route from this template without providing the `optionalUri` parameter,
+the `to("{\{?optionalUri}}")` step is omitted and messages flow directly to `mock:end`.
+When the parameter is provided, the step is included as usual.
+
+This works with `to`, `toD`, `wireTap`, `enrich`, `pollEnrich`, and `poll` EIPs.
+
+A property can also have a logical negation using the exclamation mark (`!`):
+
+[source,text]
+----
+{{!myProperty}}
+----
+
+In the following example we have the parameter named `disableTest` which we then need to negate when configuring
+this on the JMS endpoint for its `testConnectionOnStartup` option. This means that `disableTest=true` resolves as `testConnectionOnStartup=false`,
+and visa-versa. To support this then we must use the negation using the `!` mark:
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+from("timer:{{name}}?period={{myPeriod}}")
+    .setBody(simple("{{greeting}} ${body}"))
+    .to("jms:myqueue?replyTo={{?replyToQueue}}&testConnectionOnStartup={{!disableTest}}");
+----
+
+XML::
++
+[source,xml]
+----
+<route>
+    <from uri="timer:{{name}}?period={{myPeriod}}"/>
+    <setBody>
+        <simple>{{greeting}} ${body}</simple>
+    </setBody>
+    <to uri="jms:myqueue?replyTo={{?replyToQueue}}&amp;testConnectionOnStartup={{!disableTest}}"/>
+</route>
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: timer
+      parameters:
+        timerName: "{{name}}"
+        period: "{{myPeriod}}"
+      steps:
+        - setBody:
+            expression:
+              simple:
+                expression: "{{greeting}} ${body}"
+        - to:
+            uri: jms
+            parameters:
+              destinationName: myqueue
+              replyTo: "{{?replyToQueue}}"
+              testConnectionOnStartup: "{{!disableTest}}"
+----
+====
+
+== Creating a route from a route template
+
+To create routes from route templates, then this is possible from standard Java code, and all the Camel DSLs.
+
+In the following code snippet, we create 2 routes from the same template, but with different parameters.
+
+[tabs]
+====
+Java::
++
+Here we create routes from standard Java using the Camel Java API using `org.apache.camel.builder.TemplatedRouteBuilder`
+that uses a fluent builder style.
++
+[source,java]
+----
+// create two routes from the template
+TemplatedRouteBuilder.builder(context, "myTemplate")
+    .parameter("name", "one")
+    .parameter("greeting", "Hello")
+    .add(); // adds a new route from the given input parameters
+
+TemplatedRouteBuilder.builder(context, "myTemplate")
+    .parameter("name", "two")
+    .parameter("greeting", "Bonjour")
+    .parameter("myPeriod", "5s")
+    .add(); // adds a new route from the given input parameters
+----
+
+Java DSL::
++
+Here we create routes from inside a regular `RouteBuilder` using Java DSL where each `templatedRoute`
+will create and add a new route from the given input parameters.
++
+[source,java]
+----
+templatedRoute("myTemplate")
+        .parameter("name", "one")
+        .parameter("greeting", "Hello");
+
+templatedRoute("myTemplate")
+        .parameter("name", "two")
+        .parameter("greeting", "Bonjour")
+        .parameter("myPeriod", "5s");
+----
+
+XML::
++
+[source,xml]
+----
+  <templatedRoute routeTemplateRef="myTemplate">
+    <parameter name="name" value="one"/>
+    <parameter name="greeting" value="Hello"/>
+  </templatedRoute>
+
+  <templatedRoute routeTemplateRef="myTemplate">
+    <parameter name="name" value="two"/>
+    <parameter name="greeting" value="Bonjour"/>
+    <parameter name="myPeriod" value="5s"/>
+  </templatedRoute>
+----
+
+YAML::
++
+[source,yaml]
+----
+- templatedRoute:
+    routeTemplateRef: "myTemplate"
+    parameters:
+      - name: "name"
+        value: "one"
+      - name: "greeting"
+        value: "Hello"
+
+- templatedRoute:
+    routeTemplateRef: "myTemplate"
+    parameters:
+      - name: "name"
+        value: "two"
+      - name: "greeting"
+        value: "Bonjour"
+      - name: "myPeriod"
+        value: "5s"
+----
+====
+
+TIP: In Java code then the returned value from `add` method is the route id of the new route that was added.
+However `null` is returned if the route is not yet created and added, which can happen if `CamelContext` is
+not started yet.
+
+If no route id is provided, then Camel will auto assign a route id. In the example above then Camel would
+assign route ids such as `route1`, `route2` to these routes.
+
+If you want to specify a route id, then use `routeId` as follows, where the id is set to `myCoolRoute`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+TemplatedRouteBuilder.builder(context, "myTemplate")
+    .routeId("myCoolRoute")
+    .parameter("name", "one")
+    .parameter("greeting", "hello")
+    .parameter("myPeriod", "5s")
+    .add();
+----
+
+Java DSL::
++
+[source,java]
+----
+templatedRoute("myTemplate")
+        .routeId("myCoolRoute")
+        .parameter("name", "one")
+        .parameter("greeting", "hello")
+        .parameter("myPeriod", "5s");
+----
+
+XML::
++
+[source,xml]
+----
+  <templatedRoute routeTemplateRef="myTemplate" routeId="myCoolRoute">
+    <parameter name="name" value="one"/>
+    <parameter name="greeting" value="hello"/>
+    <parameter name="myPeriod" value="5s"/>
+  </templatedRoute>
+----
+
+YAML::
++
+[source,yaml]
+----
+- templatedRoute:
+    routeTemplateRef: "myTemplate"
+    routeId: "myCoolRoute"
+    parameters:
+      - name: "name"
+        value: "one"
+      - name: "greeting"
+        value: "hello"
+      - name: "myPeriod"
+        value: "5s"
+----
+====
+
+=== Using template parameters with Java DSL Simple builder
+
+When using Java DSL and xref:components:languages:simple-language.adoc[Simple] language, then beware that you should
+not use the _simple fluent builder_ when defining the simple expressions/predicates.
+
+For example, given the following route template in Java DSL:
+
+._Java-only: route template with Simple fluent builder (unsupported usage)_
+[source,java]
+----
+public class MyRouteTemplates extends RouteBuilder {
+
+    @Override
+    public void configure() throws Exception {
+        routeTemplate("myTemplate")
+            .templateParameter("name")
+            .templateParameter("color")
+            .from("direct:{{name}}")
+                .choice()
+                    .when(simple("{{color}}").isEqualTo("red")) // <1>
+                        .to("direct:red")
+                    .otherwise()
+                        .to("color:other")
+                .end();
+    }
+}
+----
+<1> This is not supported (see explanation below)
+
+
+IMPORTANT: Then notice how the simple predicate is using _simple fluent builder_ `simple("{\{color}}").isEqualTo("red")`.
+This is **not supported** with route templates and would not work when creating multiple routes from the template.
+
+Instead, the simple expression should be a literal String value _only_ as follows:
+
+._Java-only: correct Simple expression syntax for route templates_
+[source,java]
+----
+.when(simple("'{{color}}' == 'red'")
+----
+
+So the correct solution would be as follows:
+
+._Java-only: correct route template with Simple String literal_
+[source,java]
+----
+public class MyRouteTemplates extends RouteBuilder {
+
+    @Override
+    public void configure() throws Exception {
+        routeTemplate("myTemplate")
+            .templateParameter("name")
+            .templateParameter("color")
+            .from("direct:{{name}}")
+                .choice()
+                    .when(simple("'{{color}}' == 'red'")) // <1>
+                        .to("direct:red")
+                    .otherwise()
+                        .to("color:other")
+                .end();
+    }
+}
+----
+<1> This is supported and the simple expression as a String literal can be used as-is in all the Camel DSL.
+
+
+=== Using hardcoded node IDs in route templates
+
+If route templates contain hardcoded node IDs, then routes created from templates will use the same IDs.
+Camel gives every route created from a template its own prefix for the node IDs, so two or more routes
+created from the same template do not have duplicate IDs. However, if you create two routes with the same prefix,
+then you will have _duplicate id detected_ error.
+
+Given the route template below, then it has hardcoded ID (`_new-order_`) in node calling the http services.
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+routeTemplate("orderTemplate")
+    .templateParameter("queue")
+    .from("jms:{{queue}}")
+        .to("http:orderserver.acme.com/neworder").id("new-order") // <1>
+        .log("Processing order");
+----
+<1> Hardcoded ID on the To EIP
+
+XML::
++
+[source,xml]
+----
+<routeTemplate id="orderTemplate">
+    <templateParameter name="queue"/>
+    <route>
+        <from uri="jms:{{queue}}"/>
+        <to id="new-order" uri="http:orderserver.acme.com/neworder"/> <!--1-->
+        <log message="Processing order"/>
+    </route>
+</routeTemplate>
+----
+<1> Hardcoded ID on the To EIP
+
+YAML::
++
+[source,yaml]
+----
+- routeTemplate:
+    id: "myTemplate"
+    parameters:
+      - name: "queue"
+    from:
+      uri: "jms:{{queue}}"
+      steps:
+        - to:
+            id: new-order # <1>
+            uri: http:orderserver.acme.com/neworder
+        - log:
+            message: Processing order
+----
+<1> Hardcoded ID on the To EIP
+====
+
+When creating routes from templates, you can then provide a _prefix_ which is used for all node IDs.
+This allows to create 2 or more routes without _duplicate id_ errors.
+
+For example in the following, we create a new route `_myCoolRoute_` from the `_myTemplate_` template, and
+use a prefix of `_web_`.
+
+[tabs]
+====
+
+Java::
++
+[source,java]
+----
+templatedRoute("orderTemplate")
+        .routeId("webOrder")
+        .prefixId("web")
+        .parameter("queue", "order.web");
+----
++
+Then we can create a 2nd route with a different _prefixId`:
++
+[source,java]
+----
+templatedRoute("orderTemplate")
+        .routeId("ftpOrder")
+        .prefixId("ftp")
+        .parameter("queue", "order.ftp");
+----
+
+XML::
++
+[source,xml]
+----
+  <templatedRoute routeTemplateRef="orderTemplate" routeId="webOrder" prefixId="web">
+    <parameter name="queue" value="web"/>
+  </templatedRoute>
+----
++
+Then we can create a 2nd route with a different _prefixId`:
++
+[source,xml]
+----
+  <templatedRoute routeTemplateRef="orderTemplate" routeId="ftpOrder" prefixId="ftp">
+    <parameter name="queue" value="order.ftp"/>
+  </templatedRoute>
+----
+
+YAML::
++
+[source,yaml]
+----
+- templatedRoute:
+    routeTemplateRef: "orderTemplate"
+    routeId: "webOrder"
+    prefixId: "web"
+    parameters:
+      - name: "queue"
+        value: "web"
+----
++
+Then we can create a 2nd route with a different _prefixId`:
++
+[source,yaml]
+----
+- templatedRoute:
+    routeTemplateRef: "orderTemplate"
+    routeId: "ftpOrder"
+    prefixId: "ftp"
+    parameters:
+      - name: "queue"
+        value: "order.ftp"
+----
+====
+
+== Binding Beans to Route Templates
+
+Route templates support binding locally-scoped beans that are private to each route created from the template.
+This is an advanced feature.
+
+See xref:route-template-bean-binding.adoc[Route Template Bean Binding] for details.
+
+A bean that is bound when creating the route (`TemplatedRouteBuilder.bean` or the beans of a `templatedRoute`)
+takes precedence over a `templateBean` with the same name, which is then not created. This allows replacing a
+template bean, for example with a mock in a test. The template beans are bound to the `RouteTemplateContext` too, so
+when the same `RouteTemplateContext` is reused for several `addRouteFromTemplate` calls, the routes after the first
+share the template beans created for the first route; use a new `RouteTemplateContext` per route to get new ones.
+
+== Configuring route templates when creating route (advanced)
+
+There may be some special situations where you want to be able to do some custom configuration/code when
+a route is about to be created from a route template.
+
+NOTE: This is only available in Java DSL
+
+To support this you can use the `configure` in the route template DSL
+where you can specify the code to execute as show:
+
+._Java-only: custom configuration callback when creating route from template_
+[source,java]
+----
+routeTemplate("myTemplate")
+    .templateParameter("myTopic")
+    .configure((RouteTemplateContext rtc) ->
+        // do some custom code here
+    )
+    .from("direct:to-topic")
+    .to("kafka:{{myTopic}}");
+----
+
+== JMX management
+
+The route templates can be dumped as XML from the `ManagedCamelContextMBean` MBean via the `dumpRouteTemplatesAsXml` operation.
+
+== Creating routes from a properties file
+
+When using `camel-main` you can specify the parameters for route templates in `application.properties` file.
+
+For example, given the route template below:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+routeTemplate("mytemplate")
+    .templateParameter("input")
+    .templateParameter("result")
+    .from("direct:{{input}}")
+        .to("mock:{{result}}");
+----
+
+XML::
++
+[source,xml]
+----
+<routeTemplate id="mytemplate">
+    <templateParameter name="input"/>
+    <templateParameter name="result"/>
+    <route>
+        <from uri="direct:{{input}}"/>
+        <to uri="mock:{{result}}"/>
+    </route>
+</routeTemplate>
+----
+
+YAML::
++
+[source,yaml]
+----
+- routeTemplate:
+    id: mytemplate
+    parameters:
+      - name: input
+      - name: result
+    from:
+      uri: "direct:{{input}}"
+      steps:
+        - to:
+            uri: "mock:{{result}}"
+----
+====
+
+Then we can create two routes from this template by configuring the values in the `application.properties` file:
+
+[source,properties]
+----
+camel.route-template[0].template-id=mytemplate
+camel.route-template[0].input=foo
+camel.route-template[0].result=cheese
+
+camel.route-template[1].template-id=mytemplate
+camel.route-template[1].input=bar
+camel.route-template[1].result=cheese
+----
+
+== Creating routes from custom sources of template parameters
+
+The SPI interface `org.apache.camel.spi.RouteTemplateParameterSource` can be used to implement custom sources that
+are used during startup of Camel to create routes via the templates with parameters from the custom source(s).
+
+For example, a custom source can be implemented to read parameters from a shared database that Camel uses during startup
+to create routes.
+This allows externalizing these parameters and as well to easily add more routes with varying parameters.
+
+To let Camel discover custom sources, then register the source into the Camel registry.
+
+== See Also
+
+See these examples:
+
+- https://github.com/apache/camel-examples/tree/main/routetemplate[Standalone Route Template]
+- https://github.com/apache/camel-spring-boot-examples/tree/main/routetemplate[Spring Boot Route Template]
+- https://github.com/apache/camel-spring-boot-examples/tree/main/routetemplate-xml[Spring Boot Route Template XML DSL]

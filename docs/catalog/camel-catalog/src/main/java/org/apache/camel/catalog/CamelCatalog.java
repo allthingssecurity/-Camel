@@ -1,0 +1,845 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.catalog;
+
+import java.io.InputStream;
+import java.net.URISyntaxException;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.camel.tooling.model.ApiReferenceModel;
+import org.apache.camel.tooling.model.ArtifactModel;
+import org.apache.camel.tooling.model.BaseModel;
+import org.apache.camel.tooling.model.BaseOptionModel;
+import org.apache.camel.tooling.model.ComponentModel;
+import org.apache.camel.tooling.model.DataFormatModel;
+import org.apache.camel.tooling.model.DevConsoleModel;
+import org.apache.camel.tooling.model.EipModel;
+import org.apache.camel.tooling.model.JBangModel;
+import org.apache.camel.tooling.model.Kind;
+import org.apache.camel.tooling.model.LanguageModel;
+import org.apache.camel.tooling.model.MainModel;
+import org.apache.camel.tooling.model.OtherModel;
+import org.apache.camel.tooling.model.PojoBeanModel;
+import org.apache.camel.tooling.model.ReleaseModel;
+import org.apache.camel.tooling.model.SecurityAdvisoryModel;
+import org.apache.camel.tooling.model.TransformerModel;
+
+/**
+ * Catalog of components, data formats, models (EIPs), languages, and more from this Apache Camel release.
+ */
+public interface CamelCatalog {
+
+    /**
+     * Returns the {@link JSonSchemaResolver} used by this catalog.
+     *
+     * @return the resolver
+     */
+    JSonSchemaResolver getJSonSchemaResolver();
+
+    /**
+     * To use a custom {@link JSonSchemaResolver} with this catalog.
+     *
+     * @param resolver the custom resolver
+     */
+    void setJSonSchemaResolver(JSonSchemaResolver resolver);
+
+    /**
+     * To plugin a custom {@link RuntimeProvider} that amends the catalog to only include information that is supported
+     * on the runtime.
+     */
+    void setRuntimeProvider(RuntimeProvider provider);
+
+    /**
+     * Gets the {@link RuntimeProvider} in use.
+     */
+    RuntimeProvider getRuntimeProvider();
+
+    /**
+     * Enables caching of the resources which makes the catalog faster, but keeps data in memory during caching.
+     * <p/>
+     * The catalog does not cache by default.
+     */
+    void enableCache();
+
+    /**
+     * Whether caching has been enabled.
+     */
+    boolean isCaching();
+
+    /**
+     * To plugin a custom {@link SuggestionStrategy} to provide suggestion for unknown options. An edit-distance based
+     * strategy is used by default (since 4.23); set null to turn suggestions off.
+     */
+    void setSuggestionStrategy(SuggestionStrategy suggestionStrategy);
+
+    /**
+     * Gets the {@link SuggestionStrategy} in use
+     */
+    SuggestionStrategy getSuggestionStrategy();
+
+    /**
+     * To plugin a custom {@link VersionManager} to load other versions of Camel the catalog should use.
+     */
+    void setVersionManager(VersionManager versionManager);
+
+    /**
+     * Gets the {@link VersionManager} in use
+     */
+    VersionManager getVersionManager();
+
+    /**
+     * Adds a 3rd party component to this catalog.
+     *
+     * @param name      the component name
+     * @param className the fully qualified class name for the component class
+     */
+    void addComponent(String name, String className);
+
+    /**
+     * Adds a 3rd party component to this catalog.
+     *
+     * @param name       the component name
+     * @param className  the fully qualified class name for the component class
+     * @param jsonSchema the component JSON schema
+     */
+    void addComponent(String name, String className, String jsonSchema);
+
+    /**
+     * Adds a 3rd party data format to this catalog.
+     *
+     * @param name      the data format name
+     * @param className the fully qualified class name for the data format class
+     */
+    void addDataFormat(String name, String className);
+
+    /**
+     * Adds a 3rd party data format to this catalog.
+     *
+     * @param name       the data format name
+     * @param className  the fully qualified class name for the data format class
+     * @param jsonSchema the data format JSON schema
+     */
+    void addDataFormat(String name, String className, String jsonSchema);
+
+    /**
+     * The version of this Camel Catalog
+     */
+    String getCatalogVersion();
+
+    /**
+     * Attempt to load the Camel version to be used by the catalog.
+     * <p/>
+     * Loading the camel-catalog JAR of the given version of choice may require internet access to download the JAR from
+     * Maven central. You can pre download the JAR and install in a local Maven repository to avoid internet access for
+     * offline environments.
+     * <p/>
+     * When loading a new version the cache will be invalidated.
+     * <p/>
+     * <b>Important:</b> When loading a new runtime provider version, then its strongly advised to load the
+     * same/corresponding version first using {@link #loadVersion(String)}.
+     *
+     * @param  version the Camel version such as <tt>2.17.1</tt>
+     * @return         <tt>true</tt> if the version was loaded, <tt>false</tt> if not.
+     */
+    boolean loadVersion(String version);
+
+    /**
+     * Gets the current loaded Camel version used by the catalog.
+     */
+    String getLoadedVersion();
+
+    /**
+     * Gets the current loaded runtime provider version used by the catalog.
+     */
+    String getRuntimeProviderLoadedVersion();
+
+    /**
+     * Attempt to load the runtime provider version to be used by the catalog.
+     * <p/>
+     * Loading the runtime provider JAR of the given version of choice may require internet access to download the JAR
+     * from Maven central. You can pre download the JAR and install in a local Maven repository to avoid internet access
+     * for offline environments.
+     * <p/>
+     * <b>Important:</b> When loading a new runtime provider version, then its strongly advised to load the
+     * same/corresponding version first using {@link #loadVersion(String)}.
+     *
+     * @param  groupId    the runtime provider Maven groupId
+     * @param  artifactId the runtime provider Maven artifactId
+     * @param  version    the runtime provider Maven version
+     * @return            <tt>true</tt> if the version was loaded, <tt>false</tt> if not.
+     */
+    boolean loadRuntimeProviderVersion(String groupId, String artifactId, String version);
+
+    /**
+     * Find all the component names from the Camel catalog
+     */
+    List<String> findComponentNames();
+
+    /**
+     * Find all the data format names from the Camel catalog
+     */
+    List<String> findDataFormatNames();
+
+    /**
+     * Find all the language names from the Camel catalog
+     */
+    List<String> findLanguageNames();
+
+    /**
+     * Find all the transformer names from the Camel catalog
+     */
+    List<String> findTransformerNames();
+
+    /**
+     * Find all the dev-console names from the Camel catalog
+     */
+    List<String> findDevConsoleNames();
+
+    /**
+     * Find all the model names from the Camel catalog
+     */
+    List<String> findModelNames();
+
+    /**
+     * Find all the other (miscellaneous) names from the Camel catalog
+     */
+    List<String> findOtherNames();
+
+    /**
+     * Find all the pojo beans names from the Camel catalog
+     */
+    List<String> findBeansNames();
+
+    /**
+     * Find all the API reference names (Exchange, Message, CamelContext, ...) from the Camel catalog
+     *
+     * @since 4.23
+     */
+    List<String> findApiReferenceNames();
+
+    /**
+     * @param  kind the kind to look for
+     * @return      the list of part names of the given {@link Kind} available in this {@link CamelCatalog}
+     */
+    default List<String> findNames(Kind kind) {
+        return switch (kind) {
+            case component -> findComponentNames();
+            case dataformat -> findDataFormatNames();
+            case language -> findLanguageNames();
+            case transformer -> findTransformerNames();
+            case console -> findDevConsoleNames();
+            case other -> findOtherNames();
+            case eip, model -> findModelNames();
+            case bean -> findBeansNames();
+            case api -> findApiReferenceNames();
+        };
+    }
+
+    /**
+     * Find all the component names from the Camel catalog that matches the label
+     */
+    List<String> findComponentNames(String filter);
+
+    /**
+     * Find all the data format names from the Camel catalog that matches the label
+     */
+    List<String> findDataFormatNames(String filter);
+
+    /**
+     * Find all the language names from the Camel catalog that matches the label
+     */
+    List<String> findLanguageNames(String filter);
+
+    /**
+     * Find all the model names from the Camel catalog that matches the label
+     */
+    List<String> findModelNames(String filter);
+
+    /**
+     * Find all the other (miscellaneous) names from the Camel catalog that matches the label
+     */
+    List<String> findOtherNames(String filter);
+
+    /**
+     * Finds component names that match a term such as a protocol or product name, best match first: the exact scheme,
+     * then declared aliases, alternative schemes, words of the title, words of the scheme, and finally schemes
+     * containing the term. Components that share one implementation under several schemes (such as imap, pop3 and smtp)
+     * are returned once, by the scheme that matched or otherwise their primary scheme.
+     * <p>
+     * For example <tt>mqtt</tt> finds <tt>paho-mqtt5</tt>, <tt>s3</tt> finds <tt>aws2-s3</tt>, and <tt>amq</tt> finds
+     * <tt>activemq</tt>.
+     *
+     * @param  term the protocol, product, or component name to look for
+     * @param  max  the maximum number of names to return, or 0 for no limit
+     * @return      the matching component names, or an empty list if none match
+     * @since       4.23
+     */
+    default List<String> suggestComponentNames(String term, int max) {
+        return CatalogTermMatcher.suggestComponentNames(this, term, max);
+    }
+
+    /**
+     * Finds data format names that match a term such as a format or library name (for example <tt>yaml</tt> finds
+     * <tt>snakeYaml</tt>), best match first: the exact name, then declared aliases, words of the title, words of the
+     * name, and finally names containing the term.
+     *
+     * @param  term the format, library, or data format name to look for
+     * @param  max  the maximum number of names to return, or 0 for no limit
+     * @return      the matching data format names, or an empty list if none match
+     * @since       4.23
+     */
+    default List<String> suggestDataFormatNames(String term, int max) {
+        return CatalogTermMatcher.suggestNames(findDataFormatNames(), this::dataFormatModel, term, max);
+    }
+
+    /**
+     * Finds language names that match a term, best match first: the exact name, then declared aliases, words of the
+     * title, words of the name, and finally names containing the term.
+     *
+     * @param  term the language name to look for
+     * @param  max  the maximum number of names to return, or 0 for no limit
+     * @return      the matching language names, or an empty list if none match
+     * @since       4.23
+     */
+    default List<String> suggestLanguageNames(String term, int max) {
+        return CatalogTermMatcher.suggestNames(findLanguageNames(), this::languageModel, term, max);
+    }
+
+    /**
+     * Finds EIP names that match a term that need not be the EIP name (for example {@code fan-out} finds
+     * {@code multicast} and {@code dedup} finds {@code idempotentConsumer}), best match first: the exact name, then
+     * declared aliases, words of the title, words of the name, and finally names containing the term.
+     *
+     * @param  term the pattern, alias, or EIP name to look for
+     * @param  max  the maximum number of names to return, or 0 for no limit
+     * @return      the matching EIP names, or an empty list if none match
+     * @since       4.23
+     */
+    default List<String> suggestEipNames(String term, int max) {
+        return CatalogTermMatcher.suggestNames(findModelNames(), this::eipModel, term, max);
+    }
+
+    /**
+     * Returns the component information as JSON format.
+     *
+     * @param  name the component name
+     * @return      component details in JSon
+     */
+    String componentJSonSchema(String name);
+
+    /**
+     * Returns the data format information as JSON format.
+     *
+     * @param  name the data format name
+     * @return      data format details in JSon
+     */
+    String dataFormatJSonSchema(String name);
+
+    /**
+     * Returns the language information as JSON format.
+     *
+     * @param  name the language name
+     * @return      language details in JSon
+     */
+    String languageJSonSchema(String name);
+
+    /**
+     * Returns the transformer information as JSON format.
+     *
+     * @param  name the transformer name
+     * @return      transformer details in JSon
+     */
+    String transformerJSonSchema(String name);
+
+    /**
+     * Returns the other (miscellaneous) information as JSON format.
+     *
+     * @param  name the other (miscellaneous) name
+     * @return      other (miscellaneous) details in JSon
+     */
+    String otherJSonSchema(String name);
+
+    /**
+     * Returns the model information as JSON format.
+     *
+     * @param  name the model name
+     * @return      model details in JSon
+     */
+    String modelJSonSchema(String name);
+
+    /**
+     * Find all the available documentation page names.
+     *
+     * @return a list of documentation names (without the .adoc extension)
+     */
+    List<String> findDocNames();
+
+    /**
+     * Returns the AsciiDoc documentation for the given name.
+     * <p>
+     * The name corresponds to the documentation filename without the .adoc extension, such as {@code kafka-component},
+     * {@code split-eip}, {@code simple-language}, or {@code jackson2-dataformat}.
+     *
+     * @param  name the documentation name (without .adoc extension)
+     * @return      the documentation in AsciiDoc format, or {@code null} if not found
+     */
+    String asciiDoc(String name);
+
+    /**
+     * Returns the AsciiDoc documentation for the given component.
+     *
+     * @param  name the component name
+     * @return      the documentation in AsciiDoc format, or {@code null} if not found
+     */
+    String componentAsciiDoc(String name);
+
+    /**
+     * Returns the AsciiDoc documentation for the given data format.
+     *
+     * @param  name the data format name
+     * @return      the documentation in AsciiDoc format, or {@code null} if not found
+     */
+    String dataFormatAsciiDoc(String name);
+
+    /**
+     * Returns the AsciiDoc documentation for the given language.
+     *
+     * @param  name the language name
+     * @return      the documentation in AsciiDoc format, or {@code null} if not found
+     */
+    String languageAsciiDoc(String name);
+
+    /**
+     * Returns the AsciiDoc documentation for the given EIP model.
+     * <p>
+     * Delegates directly to {@link #asciiDoc(String)} since model doc names are not consistently suffixed.
+     *
+     * @param  name the model name
+     * @return      the documentation in AsciiDoc format, or {@code null} if not found
+     */
+    String modelAsciiDoc(String name);
+
+    /**
+     * Returns the AsciiDoc documentation for the given other (miscellaneous) component.
+     * <p>
+     * Delegates directly to {@link #asciiDoc(String)} since other doc names are not consistently suffixed.
+     *
+     * @param  name the other component name
+     * @return      the documentation in AsciiDoc format, or {@code null} if not found
+     */
+    String otherAsciiDoc(String name);
+
+    /**
+     * Find all the unique label names all the components are using.
+     *
+     * @return a set of all the labels.
+     */
+    Set<String> findComponentLabels();
+
+    /**
+     * Find all the unique label names all the data formats are using.
+     *
+     * @return a set of all the labels.
+     */
+    Set<String> findDataFormatLabels();
+
+    /**
+     * Find all the unique label names all the languages are using.
+     *
+     * @return a set of all the labels.
+     */
+    Set<String> findLanguageLabels();
+
+    /**
+     * Find all the unique label names all the models are using.
+     *
+     * @return a set of all the labels.
+     */
+    Set<String> findModelLabels();
+
+    /**
+     * Find all the unique label names all the other (miscellaneous) are using.
+     *
+     * @return a set of all the labels.
+     */
+    Set<String> findOtherLabels();
+
+    /**
+     * Returns the Camel Spring XML schema
+     *
+     * @return the spring XML schema
+     */
+    String springSchemaAsXml();
+
+    /**
+     * Returns the Camel XML-IO schema
+     *
+     * @return the XML-IO schema
+     */
+    String xmlIoSchemaAsXml();
+
+    /**
+     * Returns the camel-main json schema
+     *
+     * @return the camel-main json schema
+     */
+    String mainJsonSchema();
+
+    /**
+     * Returns the camel-jbang json schema
+     *
+     * @return the camel-jbang json schema
+     */
+    String jbangJsonSchema();
+
+    /**
+     * Parses the endpoint uri and constructs a key/value properties of each option
+     *
+     * @param  uri the endpoint uri
+     * @return     properties as key value pairs of each endpoint option
+     */
+    Map<String, String> endpointProperties(String uri) throws URISyntaxException;
+
+    /**
+     * Parses the endpoint uri and constructs a key/value properties of only the lenient properties (eg custom options)
+     * <p/>
+     * For example using the HTTP components to provide query parameters in the endpoint uri.
+     *
+     * @param  uri the endpoint uri
+     * @return     properties as key value pairs of each lenient properties
+     */
+    Map<String, String> endpointLenientProperties(String uri) throws URISyntaxException;
+
+    /**
+     * Validates the pattern whether its a valid time pattern.
+     *
+     * @param  pattern the pattern such as 5000, 5s, 5sec, 4min, 4m30s, 1h, etc.
+     * @return         <tt>true</tt> if valid, <tt>false</tt> if invalid
+     */
+    boolean validateTimePattern(String pattern);
+
+    /**
+     * Parses and validates the endpoint uri and constructs a key/value properties of each option.
+     *
+     * @param  uri the endpoint uri
+     * @return     validation result
+     */
+    EndpointValidationResult validateEndpointProperties(String uri);
+
+    /**
+     * Parses and validates the endpoint uri and constructs a key/value properties of each option.
+     * <p/>
+     * The option ignoreLenientProperties can be used to ignore components that uses lenient properties. When this is
+     * true, then the uri validation is stricter but would fail on properties that are not part of the component but in
+     * the uri because of using lenient properties. For example using the HTTP components to provide query parameters in
+     * the endpoint uri.
+     *
+     * @param  uri                     the endpoint uri
+     * @param  ignoreLenientProperties whether to ignore components that uses lenient properties.
+     * @return                         validation result
+     */
+    EndpointValidationResult validateEndpointProperties(String uri, boolean ignoreLenientProperties);
+
+    /**
+     * Parses and validates the endpoint uri and constructs a key/value properties of each option.
+     * <p/>
+     * The option ignoreLenientProperties can be used to ignore components that uses lenient properties. When this is
+     * true, then the uri validation is stricter but would fail on properties that are not part of the component but in
+     * the uri because of using lenient properties. For example using the HTTP components to provide query parameters in
+     * the endpoint uri.
+     *
+     * @param  uri                     the endpoint uri
+     * @param  ignoreLenientProperties whether to ignore components that uses lenient properties.
+     * @param  consumerOnly            whether the endpoint is only used as a consumer
+     * @param  producerOnly            whether the endpoint is only used as a producer
+     * @return                         validation result
+     */
+    EndpointValidationResult validateEndpointProperties(
+            String uri, boolean ignoreLenientProperties, boolean consumerOnly, boolean producerOnly);
+
+    /**
+     * Parses and validates the language as a predicate
+     * <p/>
+     * It is possible to specify language options as query parameters in the language parameter, such as
+     * jsonpath?unpackArray=true&allowEasyPredicate=false
+     *
+     * <b>Important:</b> This requires having <tt>camel-core</tt> and the language dependencies on the classpath
+     *
+     * @param  classLoader a custom classloader to use for loading the language from the classpath, or <tt>null</tt> for
+     *                     using default classloader
+     * @param  language    the name of the language
+     * @param  text        the predicate text
+     * @return             validation result
+     */
+    LanguageValidationResult validateLanguagePredicate(ClassLoader classLoader, String language, String text);
+
+    /**
+     * Parses and validates the language as an expression
+     * <p/>
+     * It is possible to specify language options as query parameters in the language parameter, such as
+     * jsonpath?unpackArray=true&allowEasyPredicate=false
+     *
+     * <b>Important:</b> This requires having <tt>camel-core</tt> and the language dependencies on the classpath
+     *
+     * @param  classLoader a custom classloader to use for loading the language from the classpath, or <tt>null</tt> for
+     *                     using default classloader
+     * @param  language    the name of the language
+     * @param  text        the expression text
+     * @return             validation result
+     */
+    LanguageValidationResult validateLanguageExpression(ClassLoader classLoader, String language, String text);
+
+    /**
+     * Parses and validates the configuration property
+     *
+     * @param  text the configuration text
+     * @return      validation result
+     */
+    ConfigurationPropertiesValidationResult validateConfigurationProperty(String text);
+
+    /**
+     * Returns the component name from the given endpoint uri
+     *
+     * @param  uri the endpoint uri
+     * @return     the component name (aka scheme), or <tt>null</tt> if not possible to determine
+     */
+    String endpointComponentName(String uri);
+
+    /**
+     * Creates an endpoint uri in Java style from the information from the properties
+     * <p/>
+     * The options are in the order of the properties when the map has one (such as a {@code LinkedHashMap}), otherwise
+     * they are sorted by name.
+     *
+     * @param  scheme                      the endpoint schema
+     * @param  properties                  the properties as key value pairs
+     * @param  encode                      whether to URL encode the returned uri or not
+     * @return                             the constructed endpoint uri
+     * @throws java.net.URISyntaxException is thrown if there is encoding error
+     */
+    String asEndpointUri(String scheme, Map<String, String> properties, boolean encode) throws URISyntaxException;
+
+    /**
+     * Creates an endpoint uri in XML style from the information from the properties
+     * <p/>
+     * The options are in the order of the properties when the map has one (such as a {@code LinkedHashMap}), otherwise
+     * they are sorted by name.
+     *
+     * @param  scheme                      the endpoint schema
+     * @param  properties                  the properties as key value pairs
+     * @param  encode                      whether to URL encode the returned uri or not
+     * @return                             the constructed endpoint uri
+     * @throws java.net.URISyntaxException is thrown if there is encoding error
+     */
+    String asEndpointUriXml(String scheme, Map<String, String> properties, boolean encode) throws URISyntaxException;
+
+    /**
+     * Lists all the components summary details in JSon
+     */
+    String listComponentsAsJson();
+
+    /**
+     * Lists all the data formats summary details in JSon
+     */
+    String listDataFormatsAsJson();
+
+    /**
+     * Lists all the languages summary details in JSon
+     */
+    String listLanguagesAsJson();
+
+    /**
+     * Lists all the transformers summary details in JSon
+     */
+    String listTransformersAsJson();
+
+    /**
+     * Lists all the dev-consoles summary details in JSon
+     */
+    String listDevConsolesAsJson();
+
+    /**
+     * The OpenAPI 3.0 specification describing every dev console endpoint, aggregated across all dev consoles.
+     */
+    String devConsolesOpenApiSpec();
+
+    /**
+     * Lists all the models (EIPs) summary details in JSon
+     */
+    String listModelsAsJson();
+
+    /**
+     * Lists all the others (miscellaneous) summary details in JSon
+     */
+    String listOthersAsJson();
+
+    /**
+     * Lists all the pojo beans summary details in JSon
+     */
+    String listBeansAsJson();
+
+    /**
+     * Reports a summary what the catalog contains in JSon
+     */
+    String summaryAsJson();
+
+    /**
+     * @param  name the component name to look up
+     * @return      the requested component or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    ComponentModel componentModel(String name);
+
+    /**
+     * @param  name the data format name to look up
+     * @return      the requested data format or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    DataFormatModel dataFormatModel(String name);
+
+    /**
+     * @param  name the language name to look up
+     * @return      the requested language or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    LanguageModel languageModel(String name);
+
+    /**
+     * @param  name the transformer name to look up
+     * @return      the requested transformer or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    TransformerModel transformerModel(String name);
+
+    /**
+     * @param  name the dev-console name to look up
+     * @return      the requested dev-console or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    DevConsoleModel devConsoleModel(String name);
+
+    /**
+     * @param  name the other name to look up
+     * @return      the requested other or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    OtherModel otherModel(String name);
+
+    /**
+     * @param  name the EIP model name to look up
+     * @return      the requested EIP model or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    EipModel eipModel(String name);
+
+    /**
+     * @param  name the FQN class name to look up
+     * @return      the requested Bean model or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    PojoBeanModel pojoBeanModel(String name);
+
+    /**
+     * The compact API reference of a core Camel class a route author's code touches (Exchange, Message, CamelContext,
+     * Registry, ProducerTemplate, Processor, AggregationStrategy, Predicate, Expression, TypeConverter): the methods
+     * that matter with their signatures, a one-line description, usage examples and the common mistakes.
+     *
+     * @param  name the simple class name (Exchange) to look up
+     * @return      the requested API reference or {@code null} in case it is not available in this {@link CamelCatalog}
+     * @since       4.23
+     */
+    ApiReferenceModel apiReferenceModel(String name);
+
+    /**
+     * @return the requested main model or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    MainModel mainModel();
+
+    /**
+     * @return the requested jbang model or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    JBangModel jbangModel();
+
+    /**
+     * Lookup the model for the given kind and name
+     *
+     * @param  kind the requested kind
+     * @param  name the name to look up
+     * @return      the requested model or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    default BaseModel<? extends BaseOptionModel> model(Kind kind, String name) {
+        return switch (kind) {
+            case component -> componentModel(name);
+            case dataformat -> dataFormatModel(name);
+            case language -> languageModel(name);
+            case transformer -> transformerModel(name);
+            case console -> devConsoleModel(name);
+            case other -> otherModel(name);
+            case eip, model -> eipModel(name);
+            case bean -> pojoBeanModel(name);
+            case api -> apiReferenceModel(name);
+        };
+    }
+
+    /**
+     * Lookup the model for the given Maven GAV
+     *
+     * @param  groupId    maven group id
+     * @param  artifactId maven artifact id
+     * @param  version    maven version (optional)
+     * @return            the requested model or {@code null} in case it is not available in this {@link CamelCatalog}
+     */
+    ArtifactModel<?> modelFromMavenGAV(String groupId, String artifactId, String version);
+
+    /**
+     * Load resource from catalog classpath
+     *
+     * @param  kind The resource kind, ex. camel-jbang
+     * @param  name The resource name
+     * @return      An input stream for reading the resource; null if the resource could not be found
+     */
+    InputStream loadResource(String kind, String name);
+
+    /**
+     * Load all Camel releases (core and spring-boot) from catalog
+     */
+    List<ReleaseModel> camelReleases();
+
+    /**
+     * Load all Camel Quarkus releases from catalog
+     */
+    List<ReleaseModel> camelQuarkusReleases();
+
+    /**
+     * Load all published Camel CVE security advisories from catalog (the data behind
+     * <a href="https://camel.apache.org/security/">camel.apache.org/security</a>, synced into the catalog when it was
+     * built).
+     *
+     * @since 4.22
+     */
+    List<SecurityAdvisoryModel> camelSecurityAdvisories();
+
+    /**
+     * Checks whether two endpoint URIs refer to the same logical endpoint.
+     * <p/>
+     * Two URIs match when they share the same scheme, context-path, and &mdash; if the component declares any query
+     * parameters as {@code endpointIdentity} &mdash; the same values for those identity parameters. Non-identity query
+     * parameters (timeouts, buffer sizes, etc.) are ignored.
+     * <p/>
+     * Implemented by default via the shared base class; declared here so the full catalog interface exposes it.
+     *
+     * @param  uri1 the first endpoint uri
+     * @param  uri2 the second endpoint uri
+     * @return      {@code true} if both URIs identify the same destination
+     */
+    boolean matchEndpointIdentity(String uri1, String uri2);
+
+}

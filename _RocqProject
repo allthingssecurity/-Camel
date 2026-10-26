@@ -1,0 +1,21 @@
+-Q theories CamelSpec
+theories/Common/Text.v
+theories/L0/Value.v
+theories/L1/Simple.v
+theories/L0/Exchange.v
+theories/L2/Route.v
+theories/L2/RouteExtract.v
+theories/L0/Convert.v
+theories/L1/Placeholder.v
+theories/L1/Lang.v
+theories/L1/LangExtract.v
+theories/L5/Model.v
+theories/L5/GenCatalog.v
+theories/L5/Uri.v
+theories/L5/Catalog.v
+theories/L6/Xml.v
+theories/L4/Lifecycle.v
+theories/L4/LifecycleExtract.v
+theories/L6/Yaml.v
+theories/L2/Props.v
+theories/L2/Determinism.v

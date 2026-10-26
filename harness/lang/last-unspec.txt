@@ -1,0 +1,93 @@
+  4342  TK: an empty part  ->  camel: A0. x683, A1.a x276, A1. x228, A1.aa x119
+  2861  PP: }} without {{  ->  camel: EIllegalArgumentException x541, Sa}} x48, B1 x2, S   }} x1
+  2374  TK: an end token outside a pair  ->  camel: A0. x1884, A1. x108, A1.[] x94, A1.b x24
+  2174  PP: {{ without }}  ->  camel: EIllegalArgumentException x1449, S x62, N x51, S1 x28
+  1973  TK: group with start/end pairs  ->  camel: A0. x1037, A1. x229, A1.[ x90, A1.a x57
+  1796  TK: regex with an end token  ->  camel: A0. x888, A1. x193, A1.b x56, A1.[ x55
+  1174  TK: a start token without an end token  ->  camel: A0. x325, A1. x70, A1.[] x32, A1.[ x23
+   951  PP: three or more braces in a row  ->  camel: EIllegalArgumentException x490, S{{ x15, S{{1 x8, S{ x6
+   913  TK: includeTokens without an end token (must be configured [CJt.32])  ->  camel: EIllegalArgumentException x913
+   777  PC/PCJ contradict: override properties (highest priority) vs OS environment / system properties (override mode)  ->  camel: EIllegalArgumentException x179, Salpha x131, S<alpha> x108, Sfalse x56
+   729  SE: group must be a positive number  ->  camel: ERuntimeExchangeException x365, ETypeConversionException/NumberFormatExc x364
+   628  TK: a token with white space at an end (trim?)  ->  camel: EIllegalArgumentException x370, A0. x65, A1. x34, A1.; x6
+   611  PF: env: a name not written as an OS variable (upper case, _): is it mapped?  ->  camel: EIllegalArgumentException x368, S<d> x72, Sd x72, S<alpha> x48
+   507  TK: no start/end pair in the text  ->  camel: A0. x507
+   504  out of scope: resource: loading of the expression text [CJc.29]  ->  camel: EExpressionIllegalSyntaxException/FileNo x336, B0 x84, N x84
+   480  PC: a key not written as an OS variable, and an OS variable of that name or spelling: is it mapped?  ->  camel: Salpha x126, S<alpha> x108, EIllegalArgumentException x105, Sfalse x21
+   322  TK: skipFirst with group (the first part or the first group?)  ->  camel: A1. x181, EPatternSyntaxException x17, A1.; x15, A1.a x15
+   311  TK: a backslash in the token (pair mode)  ->  camel: EIllegalArgumentException x311
+   272  TK: a start token inside a pair  ->  camel: A0. x75, A1.[ x28, A1.[[] x26, A1. x11
+   264  XP: is the name case-sensitive? (only a name differing in case exists)  ->  camel: B0 x132, N x132
+   252  exchangeProperty: an empty name  ->  camel: B0 x126, N x126
+   252  header: an empty name  ->  camel: B0 x126, N x126
+   252  variable: an empty name  ->  camel: B0 x126, N x126
+   238  PP: ?nested=false combined with another form  ->  camel: EIllegalArgumentException x214, S[alpha] x3, Salpha x2, Sdalpha x2
+   224  PP: an escape before three braces  ->  camel: EIllegalArgumentException x142, S{{ x7, S{{e:f x3, S{{1 x2
+   214  PP: an empty placeholder  ->  camel: EIllegalArgumentException x214
+   176  PP: a placeholder inside a placeholder key  ->  camel: EIllegalArgumentException x141, S{{ x3, S{{  x3, S{{: x3
+   171  TK: start and end tokens that overlap  ->  camel: A0. x171
+   168  PP: placeholders in a exchangeProperty name ('almost anywhere' [PP.3-4])  ->  camel: EIllegalArgumentException x168
+   168  PP: placeholders in a header name ('almost anywhere' [PP.3-4])  ->  camel: EIllegalArgumentException x168
+   168  PP: placeholders in a variable name ('almost anywhere' [PP.3-4])  ->  camel: EIllegalArgumentException x168
+   168  exchangeProperty: a ${ } in the name  ->  camel: ESimpleIllegalSyntaxException/SimplePars x168
+   168  header: a ${ } in the name  ->  camel: ESimpleIllegalSyntaxException/SimplePars x168
+   168  variable: a ${ } in the name  ->  camel: ESimpleIllegalSyntaxException/SimplePars x168
+   153  PP: a negated placeholder combined with another form  ->  camel: EIllegalArgumentException x133, S[CSPEC_A] x3, Sfalse x2, Sx:y x2
+   138  PP: an optional placeholder combined with another form  ->  camel: EIllegalArgumentException x47, N x11, Salpha x4, S x3
+   136  C: resultType needs type conversion (pending L0/Convert.v)  ->  camel: ETypeConversionException/NumberFormatExc x56, B1 x30, EIllegalArgumentException x8, ERuntimeCamelException/FileNotFoundExcep x8
+   136  PP: negating a value that is not true or false  ->  camel: EIllegalArgumentException x96, Salpha x14, Sov x4, Ssv x4
+   124  PP: a missing negated placeholder  ->  camel: EIllegalArgumentException x124
+   114  PP: placeholders inside an OS variable or system property value  ->  camel: EIllegalArgumentException x79, S{{z}} x3, Sv w x2, S x1
+   110  PP: a missing optional placeholder in a text (only endpoint URIs are documented)  ->  camel: EIllegalArgumentException x42, N x16, S<> x6, S x2
+    98  PP: a cycle of nested placeholders  ->  camel: EIllegalArgumentException x97, S{{c}}alpha{{c}}&{%7... x1
+    93  PP: an escape inside a placeholder  ->  camel: EIllegalArgumentException x90, N x1, S x1, S{{ x1
+    90  VA: is the name case-sensitive? (only a name differing in case exists)  ->  camel: B0 x45, N x45
+    78  out of scope: a regex pattern outside the model's small regex language  ->  camel: EPatternSyntaxException x66, A2., x2, A1. x1, A1.c x1
+    52  TK: group with regex and no groupDelimiter (the pattern as delimiter?)  ->  camel: A2.a[,;]a,a x4, A1.] x2, A1.a[,;]a x2, A1.a[,;]aa x2
+    46  PP: escapes in a value that is not resolved (nested=false)  ->  camel: EIllegalArgumentException x17, S\{{b}} x5, S{"q":{"m":{}}} x5, S{{z}} x3
+    35  PC: default-fallback-enabled=false with a colon: the key characters are not covered  ->  camel: EIllegalArgumentException x26, S<alpha|alpha> x1, S<sysv|sysv> x1, S\alpha x1
+    33  PP: key characters (only letters, digits, . - _ are covered)  ->  camel: EIllegalArgumentException x9, S x3, S  x3, S! x3
+    26  R: resultType needs type conversion (pending L0/Convert.v)  ->  camel: EIllegalArgumentException x12, B1 x5, B0 x2, Sev x2
+    24  TK: tokenizing a null input  ->  camel: ERuntimeCamelException/NoSuchVariableExc x18, ERuntimeCamelException/NoSuchHeaderExcep x4, ERuntimeCamelException/NoSuchPropertyExc x2
+    22  PP: three or more backslashes before {{ or }}  ->  camel: EIllegalArgumentException x17, S\\\}} x2, S\\{{/alpha x1, S}\\\}}{: x1
+    16  H: a header present with the value null  ->  camel: B0 x4, B1 x4, N x4, Sp x4
+    16  env: two headers whose names differ only in case  ->  camel: B1 x8, S2 x8
+    14  TK: a header: source missing as a header but present as a property  ->  camel: EInvalidPayloadException x5, ERuntimeCamelException/NoSuchHeaderExcep x2, A1., x1, A1.-12 x1
+    14  TK: a source with a colon and an unknown kind  ->  camel: EIllegalArgumentException x14
+    14  TK: the toString() of a List input  ->  camel: A3.[a,b, c] x7, EInvalidPayloadException x7
+    12  TK: a backslash in the token other than \n  ->  camel: A1.abc x2, A1.p+q x2, A2.a,b|c+d[e*f x2, A3.x,,y x2
+    12  VA: a name with a colon and no documented repository id  ->  camel: EIllegalArgumentException x6, B0 x3, N x3
+    12  out of scope: route: variables need a route [VA.80-95]  ->  camel: EIllegalArgumentException x6, B0 x3, N x3
+     9  PF: placeholders inside a system property value  ->  camel: EIllegalArgumentException x9
+     6  PF: env: variable name characters  ->  camel: EIllegalArgumentException x6
+     6  PF: service: only one of _SERVICE_HOST and _SERVICE_PORT is set  ->  camel: EIllegalArgumentException x3, S[h:1] x3
+     6  VA: a group: variable name that is not group:g:name  ->  camel: EIllegalArgumentException x6
+     5  PP: a question mark inside a placeholder  ->  camel: EIllegalArgumentException x4, S? x1
+     4  out of scope: resource: loading of the expression text [C.131-179]  ->  camel: ERuntimeCamelException/FileNotFoundExcep x4
+     4  R: is the registry id case-sensitive?  ->  camel: EIllegalArgumentException x4
+     4  PP: placeholders in the token  ->  camel: A1.a
+b
+c x1, A1.a
+b x1, A1.a b c x1, A2.a,b x1
+     4  TK: an empty token  ->  camel: A3.a,,,b x1, A4.a,,
+,b x1, A5.a,
+,b,
+,c x1, A5.a, ,b, ,c x1
+     4  TK: simple language in the token (dynamic tokens)  ->  camel: A0. x4
+     3  PF: env without a name  ->  camel: EIllegalArgumentException x3
+     3  PF: placeholders inside an OS variable value  ->  camel: EIllegalArgumentException x3
+     3  PF: service: a name that is not upper case  ->  camel: S[myserver:8888] x3
+     3  PF: sys: property name characters  ->  camel: EIllegalArgumentException x3
+     3  out of scope: the bean: function (needs a registry and camel-bean) [PF.262-300]  ->  camel: ENoSuchBeanException x3
+     3  out of scope: the boolean: function (Simple over properties) [PF.95-174]  ->  camel: ERuntimeCamelException/IllegalArgumentEx x3
+     2  C: trim before or after resolving the placeholders  ->  camel: B1 x1, Ss x1
+     2  PP: placeholders in a ref name ('almost anywhere' [PP.3-4])  ->  camel: EIllegalArgumentException x2
+     2  R: a ref to an id that is not in the registry  ->  camel: EIllegalArgumentException x2
+     2  R: a registry bean that is neither an Expression nor a Predicate  ->  camel: EIllegalArgumentException x2
+     2  ref: an empty name  ->  camel: EIllegalArgumentException x2
+     2  TK: a endToken with white space at an end (trim?)  ->  camel: EIllegalArgumentException x2
+     1  TK: resultType needs type conversion (pending L0/Convert.v)  ->  camel: A2.a,b x1
+     1  TK: tokenize as a predicate  ->  camel: B1 x1
+     1  out of scope: tokenize inheritNamespaceTagName (XML)  ->  camel: EIllegalArgumentException x1
+     1  out of scope: tokenize xml mode  ->  camel: A1.<a>1</a> x1
+     1  TK: simple language in group  ->  camel: ERuntimeExchangeException x1
