@@ -173,12 +173,13 @@ Record route : Type := mkRoute { r_id : chars; r_from : chars; r_steps : list st
 
 (** An onException clause [EC.3-9, M:onException]: the exception classes, an optional onWhen, handled, continued,
     maximumRedeliveries (with redeliveryDelay 0: delays are time, not modelled yet), and the steps of its block. The
-    clauses of a program apply to all its routes (RouteBuilder scope [EC.154-158]); route-scoped clauses: not yet. *)
+    clauses of a program apply to all its routes (RouteBuilder scope [EC.154-158]), or to one route (c_scope). *)
 Record clause : Type := mkClause {
   c_ex : list chars; c_when : option expr; c_handled : option bool; c_continued : bool;
   c_redeliveries : nat; c_steps : list step;
   c_retry : option expr;    (* retryWhile [EXA.393-425] *)
-  c_onredel : bool }.       (* onRedeliveryRef to the harness's fixed processor (L3.onRedelivery) *)
+  c_onredel : bool;         (* onRedeliveryRef to the harness's fixed processor (L3.onRedelivery) *)
+  c_scope : option chars }. (* None: global (RouteBuilder scope); Some r: in route r [EC.152-161, EXA.10-140] *)
 
 (** The error handler of the program's routes [EH.25-47]: the default error handler, or a dead letter channel
     [DLC.25-31] with its dead letter endpoint (a mock here), maximumRedeliveries (redeliveryDelay 0) and which message
@@ -284,7 +285,7 @@ Definition group_items (o : split_opts) (l : list val) : r0 (list val) :=
     sends a (shallow) copy of the exchange [MCE.398-399]: headers and properties are copied, the body is the item. *)
 Definition sub_of (x : exchange) (v : val) : exchange :=
   mkX (mkMsg v (m_headers (x_msg x))) (x_props x) (x_vars x) (x_mep x) None false (x_eh x) false false []
-      (Some (mkMsg v (m_headers (x_msg x)))).
+      (Some (mkMsg v (m_headers (x_msg x)))) (x_route x) (x_cont x).
 (*! R L2.split.failure-wrapped DOC-BUG [M:split.stopOnException] [M:split.maxFailedRecords] MulticastProcessor *)
 (** The exception that stops a split: [M:split.maxFailedRecords] says "a org.apache.camel.CamelExchangeException is
     thrown"; [M:split.stopOnException] says "the caused exception will be thrown". Camel throws, in both cases, a
@@ -306,7 +307,7 @@ Definition has_maxfail (o : split_opts) : bool := match sp_maxfail o with Some _
     [RLE.4]) copy start their own unit of work, whose original message is the one they start with; a loop copy and the
     exchange passed through direct: stay in the caller's unit of work [DLC.337-338]. *)
 Definition copy_of (x : exchange) : exchange :=
-  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) None false (x_eh x) false false [] (Some (x_msg x)).
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) None false (x_eh x) false false [] (Some (x_msg x)) (x_route x) (x_cont x).
 (*! R L2.multicast.last-reply DOC [M:multicast.aggregationStrategy] [M:multicast.40] [M:recipientList.42] *)
 (** "By default Camel uses the last reply as the outgoing message" [M:multicast.aggregationStrategy]; recipient list:
     "The reply of the last recipient, unless an aggregationStrategy is set" [M:recipientList.42]. The message (body
@@ -364,7 +365,7 @@ Definition close_key (g : gstate) (id k : chars) : gstate :=
 Definition is_closed (g : gstate) (id k : chars) : bool := existsb (ceqs k) (clget id (g_closed g)).
 (** The aggregated exchange is its own exchange: no exception, not stopped, the error handler in use. *)
 Definition fresh (x : exchange) : exchange :=
-  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) None false true false false [] None.
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) None false true false false [] None (x_route x) (x_cont x).
 
 (** Whether steps contain a doTry, or a direct call (which may lead to one). *)
 Fixpoint sdt (s : step) : bool :=
@@ -477,14 +478,14 @@ Definition loop_count (v : val) : lcount :=
     random-111-2898). *)
 Definition loop_copy (orig cur : exchange) : exchange :=
   let c := copy_of orig in
-  mkX (x_msg c) (x_props c) (x_vars c) (x_mep c) (x_exn c) (x_stop c) (x_eh c) (x_seen c) (x_done c) (x_uow cur) (x_orig cur).
+  mkX (x_msg c) (x_props c) (x_vars c) (x_mep c) (x_exn c) (x_stop c) (x_eh c) (x_seen c) (x_done c) (x_uow cur) (x_orig cur) (x_route cur) (x_cont cur).
 Definition rce : exn := mkExn (str "org.apache.camel.TypeConversionException") (str "?")
                           (Some (mkExn (str "java.lang.NumberFormatException") (str "?") None)).
 
 (** ** Idempotent consumer and load balancers: helpers *)
 Definition add_key (g : gstate) (id k : chars) : gstate := close_key g id k.
 Definition add_uow (x : exchange) (id k : chars) : exchange :=
-  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) ((id, k) :: x_uow x) (x_orig x).
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) ((id, k) :: x_uow x) (x_orig x) (x_route x) (x_cont x).
 Definition remove_key (g : gstate) (idk : chars * chars) : gstate :=
   let '(id, k) := idk in
   mkG (g_global g) (g_route g) (g_group g) (g_agg g)
@@ -685,19 +686,42 @@ Fixpoint candidates (x : exchange) (e : exn) (cs : list clause) : r0 (list ((nat
   end.
 Fixpoint min_score (l : list ((nat * nat) * bool * clause)) : option (nat * nat) :=
   match l with [] => None | (sc, _, _) :: r => best (Some sc) (min_score r) end.
+(** The clauses that apply in the exchange's route: the global ones, and the ones of that route [EXA.84-121]. *)
+Definition in_scope (x : exchange) (k : clause) : bool :=
+  match c_scope k with None => true | Some r => ceqs r (x_route x) end.
+Definition is_route_scoped (k : clause) : bool := match c_scope k with Some _ => true | None => false end.
+(** Whether route [rid] has clauses at all (global ones, or its own): the error handler of that route has exception
+    policies (the CODE rules L3.redelivery.headers-after and the "with clauses" UNSPECIFIED classes are about this). *)
+Definition has_clauses (rid : chars) : bool :=
+  existsb (fun k => match c_scope k with None => true | Some r => ceqs r rid end) C.
+(** Within one scope: the closest; equally close: the last configured, with onWhen not documented. *)
+Definition pick_tied (l : list ((nat * nat) * bool * clause)) (m : nat * nat) : r0 (option clause) :=
+  let tied := filter (fun '(sc, _, _) => eq2 sc m) l in
+  match tied with
+  | [(_, _, k)] => Ok0 (Some k)
+  | _ => if existsb (fun '(_, w, _) => w) tied then Uns0 "EC: equally close onException clauses with onWhen"
+         else match rev tied with (_, _, k) :: _ => Ok0 (Some k) | [] => Ok0 None end
+  end.
+(*! R L3.onException.scope DOC [EC.152-161] [EC.185-197] [EXA.84-121] [EXA.141-148] *)
+(** "The closest match wins" across all the clauses that apply; "When an onException in a route and an onException
+    in the RouteBuilder (context scoped) are equally close, then the one in the route wins" [EC.189-191]; "the last
+    one configured is used" is within "the same scope" [EC.194-196]. Equally close by distance but not by the nesting
+    of the cause, across the two scopes: the two tie rules [EC.187-191] do not say which comes first (no rule). *)
 Definition select_clause (x : exchange) (e : exn) : r0 (option clause) :=
-  match candidates x e C with
+  match candidates x e (filter (in_scope x) C) with
   | Uns0 w => Uns0 w
   | Ok0 l =>
-      match min_score l with
-      | None => Ok0 None
-      | Some m =>
-          let tied := filter (fun '(sc, _, _) => eq2 sc m) l in
-          match tied with
-          | [(_, _, k)] => Ok0 (Some k)
-          | _ => if existsb (fun '(_, w, _) => w) tied then Uns0 "EC: equally close onException clauses with onWhen"
-                 else match rev tied with (_, _, k) :: _ => Ok0 (Some k) | [] => Ok0 None end
-          end
+      let lr := filter (fun '(_, _, k) => is_route_scoped k) l in
+      let lg := filter (fun '(_, _, k) => negb (is_route_scoped k)) l in
+      match min_score lr, min_score lg with
+      | None, None => Ok0 None
+      | Some mr, None => pick_tied lr mr
+      | None, Some mg => pick_tied lg mg
+      | Some mr, Some mg =>
+          if Nat.ltb (fst mr) (fst mg) then pick_tied lr mr
+          else if Nat.ltb (fst mg) (fst mr) then pick_tied lg mg
+          else if Nat.eqb (snd mr) (snd mg) then pick_tied lr mr
+          else Uns0 "EC: route and global clauses equally close by class but not by the nested cause (tie rules' order not documented)"
       end
   end.
 (** Whether the route's error handler would act on an exception at this point (a clause matches it, or the error
@@ -743,7 +767,7 @@ Definition not_redelivered_headers (n : nat) (x : exchange) : exchange :=
   end.
 Definition eh_outcome_n (k : clause) (n : nat) (x : exchange) (e : exn) (y : exchange) : option exchange :=
   if c_continued k then
-    match c_handled k with Some true => None | _ => Some (drop_redelivery_headers (set_eh y (x_eh x))) end
+    match c_handled k with Some true => None | _ => Some (set_cont (drop_redelivery_headers (set_eh y (x_eh x))) true) end
   else match c_handled k with
        | Some true => Some (drop_redelivery_headers (set_done (set_eh y (x_eh x)) true))
        | _ => Some (set_seen (set_exn (not_redelivered_headers n (set_eh y (x_eh x))) (Some e)) true)
@@ -781,9 +805,16 @@ Fixpoint retry_n (fuel k : nat) (p : expr) (x : exchange) : r0 nat :=
 (** With retryWhile (and so a redelivery option on the clause), the clause inherits the error handler's
     maximumRedeliveries [ER.21-25]; whether the max counter header then shows it conflicts with [DLC.583-584]: no rule
     when that inherited maximum is not 0 (Camel shows it: runs/rw1-real random-601-2900; doc-bugs.md). *)
+(*! R L3.redelivery.stepless-inherit DOC-BUG [ER.17-19] ExceptionPolicy.createRedeliveryPolicy *)
+(** [ER.17-19]: "By default, any Exception Clause will not redeliver! (as it sets the maximumRedeliveries option to
+    0)". Camel does that only for a clause with steps; a clause without steps (and without maximumRedeliveries) uses the
+    error handler's policy, so it redelivers as the error handler does (ExceptionPolicy.createRedeliveryPolicy 114-128,
+    "this is the behavior Camel has always had"; harness/probes/OnRedeliveryInheritProbe.java: 3 attempts under a dead
+    letter channel with maximumRedeliveries 2, also on 4.22.1 and 4.23.0). The doc text is the bug (doc-bugs.md). *)
+Definition eh_max : nat := match EHc with EHDlc _ n _ => n | EHDefault => O end.
 Definition redeliveries (k : clause) (x : exchange) : r0 nat :=
   match c_retry k with
-  | None => Ok0 (c_redeliveries k)
+  | None => Ok0 (match c_redeliveries k, c_steps k with O, [] => eh_max | n, _ => n end)
   | Some p => match EHc with
               | EHDlc _ (S _) _ => Uns0 "ER/DLC: retryWhile with a maximumRedeliveries inherited from the error handler (max counter header: docs conflict)"
               | _ => retry_n 10 1 p x
@@ -818,7 +849,7 @@ Definition surface (x : exchange) : exchange :=
     not-redelivered headers are added (CODE, as above). *)
 Definition default_failed (x : exchange) (e : exn) : exchange :=
   let x1 := set_seen (set_exn x (Some e)) (x_eh x) in
-  if x_eh x && match C with [] => false | _ => true end then not_redelivered_headers 0 x1 else x1.
+  if x_eh x && has_clauses (x_route x) then not_redelivered_headers 0 x1 else x1.
 (*! R L3.dlc DOC [DLC.21] [DLC.184-228] [DLC.230-291] [M:deadLetterChannel.useOriginalMessage] [M:deadLetterChannel.useOriginalBody] *)
 (** "Unlike the default error handler, the dead letter channel will, by default, handle exceptions and move the
     failed messages to the dead letter queue" [DLC.21]; "When all attempts of redelivery have failed, the Exchange is
@@ -943,16 +974,21 @@ with bs1 : gstate -> exchange -> step -> gstate -> exchange -> list event -> Pro
 (** The called route has its own error handler (in use even when the caller is inside a doTry). What the caller does
     when the called route handled an exception (handled ends "being routed"), or when a failure comes back for
     which a clause matches in the caller, is not documented: no rule. *)
-| BToDirect : forall g x n r g' x' t, find_route n = Some r -> bss g (set_eh x true) (r_steps r) g' x' t ->
+(*! R L3.doTry.escape.direct.real CODE findings/2026-10-26-dotry-escaping-exception-handled-when-nested.md *)
+(** Real-mode delta: an exception that escaped a doTry in a called route without clauses comes back to a caller
+    route that has clauses: Camel's error handler of the caller processes it (runs/sc1-real scope-701-1355): no rule. *)
+| BToDirect : forall g x n r g' x' t, find_route n = Some r -> bss g (set_route (set_eh x true) (r_id r)) (r_steps r) g' x' t ->
     x_done x' = false -> clause_matches x' = false ->
-    bs1 g x (STo (EDirect n)) g' (set_eh x' (x_eh x)) t
+    (real && match x_exn x' with Some _ => true | None => false end && x_seen x' && has_clauses (x_route x)
+     && negb (has_clauses (r_id r))) = false ->
+    bs1 g x (STo (EDirect n)) g' (set_route (set_eh x' (x_eh x)) (x_route x)) t
 (*! R L3.dlc.direct DOC [DLC.186-188] [DLC.337-338] *)
 (** The called route's dead letter channel moved the exchange: "The exchange is then complete, and from the client
     point of view, the message is done being processed" [DLC.186-188] (the unit of work spans the direct: call     [DLC.337-338]): the caller does not route it further. With clauses in the program the exchange could also have
     been handled by a clause (not documented, L3.direct.boundary): only without clauses. *)
-| BToDirectDLC : forall g x n r g' x' t q k uo, find_route n = Some r -> bss g (set_eh x true) (r_steps r) g' x' t ->
-    x_done x' = true -> EHc = EHDlc q k uo -> C = [] ->
-    bs1 g x (STo (EDirect n)) g' (set_eh x' (x_eh x)) t
+| BToDirectDLC : forall g x n r g' x' t q k uo, find_route n = Some r -> bss g (set_route (set_eh x true) (r_id r)) (r_steps r) g' x' t ->
+    x_done x' = true -> EHc = EHDlc q k uo -> has_clauses (r_id r) = false ->
+    bs1 g x (STo (EDirect n)) g' (set_route (set_eh x' (x_eh x)) (x_route x)) t
 (*! R L2.stop DOC [ST.9-13] [M:stop.6] [M:stop.21] *)
 | BStop : forall g x, bs1 g x SStop g (set_stop x true) []
 (*! R L2.throwException DOC [TE.9-13] [TE.29] [M:throwException.24] *)
@@ -1073,7 +1109,7 @@ with bs1 : gstate -> exchange -> step -> gstate -> exchange -> list event -> Pro
     exception that a clause matches UNSPECIFIED (no rule) instead of modelling the nesting. *)
 | BDoTry : forall g x body cs fin g1 x1 t1 g2 x2 t2, bss g (set_eh x false) body g1 x1 t1 ->
     baft g1 x1 cs fin g2 x2 t2 ->
-    (real && x_eh x && (match C with [] => false | _ => true end || is_dlc) && match x_exn x2 with Some _ => true | None => false end) = false ->
+    (real && x_eh x && (has_clauses (x_route x) || is_dlc) && match x_exn x2 with Some _ => true | None => false end) = false ->
     bs1 g x (SDoTry body cs fin) g2 (set_eh (seen_if_failed x2) (x_eh x)) (t1 ++ t2)
 (*! R L2.split DOC [SPL.13-15] [SPL.380] [M:split.6] *)
 (** The split value is computed from the expression; its items (grouped, if [group]) are processed one by one
@@ -1144,10 +1180,10 @@ with bfo : gstate -> exchange -> list chars -> nat -> list step -> gstate -> exc
 | BFoOk : forall g x exs k b bs g1 y t, bs1 g x b g1 y t -> x_exn y = None -> x_stop y = false -> x_done y = false ->
     kveqb (x_vars y) (x_vars x) && kvset_eqb (x_props y) (x_props x) = true -> bfo g x exs (S k) (b :: bs) g1 y t
 | BFoNext : forall g x exs k b b' bs g1 y t1 e g2 z t2, bs1 g x b g1 y t1 -> x_exn y = Some e ->
-    match C with [] => true | _ => false end = true -> fo_monitored real exs e = Ok0 true -> same_state y x = true ->
+    has_clauses (x_route x) = false -> fo_monitored real exs e = Ok0 true -> same_state y x = true ->
     bfo g1 x exs (S k) (b' :: bs) g2 z t2 -> bfo g x exs (S (S k)) (b :: b' :: bs) g2 z (t1 ++ t2)
 | BFoLast : forall g x exs k b bs g1 y t e, bs1 g x b g1 y t -> x_exn y = Some e ->
-    match C with [] => true | _ => false end = true ->
+    has_clauses (x_route x) = false ->
     (match fo_monitored real exs e with Ok0 false => true | _ => false end || Nat.eqb k 0 ||
      match bs with [] => true | _ => false end) = true ->
     bfo g x exs (S k) (b :: bs) g1 y t
@@ -1176,12 +1212,15 @@ with baft : gstate -> exchange -> list (list chars * option expr * list step) ->
 (*! R L3.doCatch.caught DOC [DT.211-213] [DT.26-27] [M:doTry.24] *)
 (** The matching doCatch runs on the exchange with the exception caught (no longer failed); an exception thrown in it
     is the one pending for doFinally and is thrown from the doTry [DT.223-225]. *)
+(*! R L3.doCatch.after-continued.real CODE findings/2026-10-26-docatch-skipped-after-continued-failure-in-called-route.md *)
+(** Real-mode delta: after an exception was continued on the exchange (in a called route or earlier in the same
+    route), Camel 4.23 / the pin skips a matching doCatch (EXCEPTION_HANDLED, CAMEL-25115): no rule in Real mode. *)
 | BACaught : forall g x cs fin e ss g1 x1 t1 g2 x2 t2, x_stop x = false -> x_exn x = Some e ->
-    select_catch x e cs = Ok0 (Some ss) -> bss g (set_exn x None) ss g1 x1 t1 -> x_stop x1 = false ->
+    select_catch x e cs = Ok0 (Some ss) -> (real && x_cont x) = false -> bss g (set_exn x None) ss g1 x1 t1 -> x_stop x1 = false ->
     bfin g1 (set_exn x1 None) (x_exn x1) fin g2 x2 t2 -> baft g x cs fin g2 x2 (t1 ++ t2)
 (*! R L3.doCatch.stop DOC [DT.233-234] *)
 | BACaughtStop : forall g x cs fin e ss g1 x1 t1, x_stop x = false -> x_exn x = Some e ->
-    select_catch x e cs = Ok0 (Some ss) -> bss g (set_exn x None) ss g1 x1 t1 -> x_stop x1 = true ->
+    select_catch x e cs = Ok0 (Some ss) -> (real && x_cont x) = false -> bss g (set_exn x None) ss g1 x1 t1 -> x_stop x1 = true ->
     baft g x cs fin g1 x1 t1
 (*! R L3.doTry.uncaught DOC [DT.223-225] *)
 (** "An exception that is not caught by any doCatch ... The exception is thrown from the doTry, and the exchange
@@ -1263,7 +1302,7 @@ Inductive boc : option oncomp -> gstate -> exchange -> gstate -> exchange -> lis
     boc (Some o) g x g' x t
 (*! R L3.onCompletion.before-original.real CODE findings/2026-10-26-oncompletion-beforeconsumer-useoriginal-inout.md *)
 | BOcBefore : forall o g x y0 g' y t, oc_fires o x = PB true -> oc_before o = true ->
-    (real && oc_orig o && match x_mep x with InOut => true | _ => false end) = false -> oc_input o x = Some y0 ->
+    (real && oc_orig o) = false -> oc_input o x = Some y0 ->
     bss g y0 (oc_steps o) g' y t -> x_exn y = None -> x_stop y = false -> x_done y = false ->
     (kveqb (x_vars y) (x_vars y0) && kvset_eqb (x_props y) (x_props y0)) = true ->
     boc (Some o) g x g' (with_msg x (x_msg y)) t.
@@ -1337,14 +1376,18 @@ with run1 (fuel : nat) (g : gstate) (x : exchange) (s : step) {struct fuel} : ou
       | STo (EDirect n) =>
           match find_route n with
           | None => OUns "DC: send to direct: without a consumer (block/timeout not modelled)"
-          | Some r => seqo (run f g (set_eh x true) (r_steps r)) (fun g' x' t h =>
+          | Some r => seqo (run f g (set_route (set_eh x true) (r_id r)) (r_steps r)) (fun g' x' t h =>
                         if x_done x' then
-                          match EHc, C with
-                          | EHDlc _ _ _, [] => ODone g' (set_eh x' (x_eh x)) t ("L2.to.direct" :: "L3.dlc.direct" :: h)
-                          | _, _ => OUns "EH: an exception handled in a route called by direct: (does the caller continue?) not documented"
+                          match EHc with
+                          | EHDlc _ _ _ => if has_clauses (r_id r) then OUns "EH: an exception handled in a route called by direct: (does the caller continue?) not documented"
+                                           else ODone g' (set_route (set_eh x' (x_eh x)) (x_route x)) t ("L2.to.direct" :: "L3.dlc.direct" :: h)
+                          | EHDefault => OUns "EH: an exception handled in a route called by direct: (does the caller continue?) not documented"
                           end
                         else if clause_matches x' then OUns "EH: a failure from a route called by direct: that a clause of the caller matches: not documented"
-                        else ODone g' (set_eh x' (x_eh x)) t ("L2.to.direct" :: "L3.direct.boundary" :: h))
+                        else if real && match x_exn x' with Some _ => true | None => false end && x_seen x' && has_clauses (x_route x)
+                                && negb (has_clauses (r_id r))
+                        then OUns "REAL: an exception out of a doTry in a called route without clauses, back in a caller with clauses (finding)"
+                        else ODone g' (set_route (set_eh x' (x_eh x)) (x_route x)) t ("L2.to.direct" :: "L3.direct.boundary" :: (if existsb is_route_scoped C then "L3.onException.scope" :: h else h)))
           end
       | SStop => done1 "L2.stop" g (set_stop x true)
       | SThrow c m =>
@@ -1395,7 +1438,7 @@ with run1 (fuel : nat) (g : gstate) (x : exchange) (s : step) {struct fuel} : ou
       | SDoTry body cs fin =>
           seqo (run f g (set_eh x false) body) (fun g1 x1 t1 h1 =>
             seqo (runaft f g1 x1 cs fin) (fun g2 x2 t2 h2 =>
-              if real && x_eh x && (match C with [] => false | _ => true end || is_dlc) && match x_exn x2 with Some _ => true | None => false end
+              if real && x_eh x && (has_clauses (x_route x) || is_dlc) && match x_exn x2 with Some _ => true | None => false end
               then OUns "REAL: an exception out of a doTry in a route with onException clauses (processed by the error handler when the doTry is nested: finding)"
               else ODone g2 (set_eh (seen_if_failed x2) (x_eh x)) (t1 ++ t2) ("L3.doTry" :: h1 ++ h2)))
       | SMulticast st bs =>
@@ -1589,9 +1632,8 @@ with runfo (fuel : nat) (g : gstate) (x : exchange) (exs : list chars) (k : nat)
                       then OUns "FO: variables/properties changed in a failover attempt (Camel keeps the caller's: runs/ic1-real, ic6-real) not documented"
                       else ODone g1 y t1 h1
             | Some e =>
-                match C with
-                | _ :: _ => OUns "FO: a failover attempt failing in a route with onException clauses (inheritErrorHandler) not modelled"
-                | [] =>
+                if has_clauses (x_route x) then OUns "FO: a failover attempt failing in a route with onException clauses (inheritErrorHandler) not modelled" else
+                (
                     match fo_monitored real exs e with
                     | Uns0 w => OUns w
                     | Ok0 mon =>
@@ -1603,8 +1645,7 @@ with runfo (fuel : nat) (g : gstate) (x : exchange) (exs : list chars) (k : nat)
                             else ODone g1 y t1 h1
                         | _, _ => ODone g1 y t1 h1
                         end
-                    end
-                end
+                    end)
             end)
       | _, _ => OUns "FO: no attempt left"
       end
@@ -1648,6 +1689,7 @@ with runaft (fuel : nat) (g : gstate) (x : exchange) (cs : list (list chars * op
                | Uns0 w => OUns w
                | Ok0 None => tag "L3.doTry.uncaught" (runfin f g (set_exn x None) (Some e) fin)
                | Ok0 (Some ss) =>
+                   if real && x_cont x then OUns "REAL: a doCatch after an exception was continued on the exchange is skipped (finding)" else
                    seqo (run f g (set_exn x None) ss) (fun g1 x1 t1 h1 =>
                      if x_stop x1 then ODone g1 x1 t1 ("L3.doCatch.stop" :: "L3.doCatch.select" :: h1)
                      else seqo (runfin f g1 (set_exn x1 None) (x_exn x1) fin) (fun g2 x2 t2 h2 =>
@@ -1741,9 +1783,11 @@ Proof.
       * destruct (find_route n) as [r|] eqn:F; [|discriminate].
         apply seqo_done in H as [g1 [x1 [t1 [h1 [H1 H2]]]]].
         destruct (x_done x1) eqn:Hd.
-        -- destruct EHc as [|q k uo] eqn:He; [discriminate|]. destruct C as [|c0 cs0] eqn:HC; [|discriminate].
+        -- destruct EHc as [|q k uo] eqn:He; [discriminate|]. destruct (has_clauses (r_id r)) eqn:HC; [discriminate|].
            inversion H2; subst. eapply BToDirectDLC; eauto.
         -- destruct (clause_matches x1) eqn:Hm; [discriminate|].
+           destruct (real && match x_exn x1 with Some _ => true | None => false end && x_seen x1 && has_clauses (x_route x)
+                     && negb (has_clauses (r_id r))) eqn:Hrr; [discriminate|].
            inversion H2; subst. eapply BToDirect; eauto.
       * inversion H; subst. constructor.
     + inversion H; subst. constructor.
@@ -1768,7 +1812,7 @@ Proof.
       * inversion H; subst. apply BThrow. left. exact Heh.
     + apply seqo_done in H as [g1 [x1 [t1 [h1 [H1 H2]]]]].
       apply seqo_done in H2 as [g2 [x2 [t2 [h2 [H3 H4]]]]].
-      destruct (real && x_eh x && (match C with [] => false | _ => true end || is_dlc) && match x_exn x2 with Some _ => true | None => false end) eqn:Hr; [discriminate|].
+      destruct (real && x_eh x && (has_clauses (x_route x) || is_dlc) && match x_exn x2 with Some _ => true | None => false end) eqn:Hr; [discriminate|].
       inversion H4; subst. eapply BDoTry; eauto.
     + destruct (eval_expr x e) as [v|w] eqn:E; [|discriminate].
       destruct (split_items o v) as [l0|w] eqn:I; [|discriminate].
@@ -1867,17 +1911,17 @@ Proof.
   - intros g x exs k bs g' x' t h H. simpl in H. destruct k as [|k']; [discriminate|]. destruct bs as [|b bs']; [discriminate|].
     apply seqo_done in H as [g1 [y [t1 [h1 [H1 H2]]]]].
     destruct (x_exn y) as [e|] eqn:Hx.
-    + destruct C as [|c0 cs0] eqn:HC; [|discriminate].
+    + destruct (has_clauses (x_route x)) eqn:HC; [discriminate|].
       destruct (fo_monitored real exs e) as [mon|w] eqn:Mo; [|discriminate].
       destruct k' as [|k''].
-      * simpl in H2. inversion H2; subst. eapply BFoLast; [eapply IH1; exact H1|exact Hx|rewrite HC; reflexivity|]. rewrite Mo. destruct mon; reflexivity.
+      * simpl in H2. inversion H2; subst. eapply BFoLast; [eapply IH1; exact H1|exact Hx|exact HC|]. rewrite Mo. destruct mon; reflexivity.
       * destruct bs' as [|b' bs''].
-        -- simpl in H2. inversion H2; subst. eapply BFoLast; [eapply IH1; exact H1|exact Hx|rewrite HC; reflexivity|]. rewrite Mo. destruct mon; simpl; rewrite ?Bool.orb_true_r; reflexivity.
+        -- simpl in H2. inversion H2; subst. eapply BFoLast; [eapply IH1; exact H1|exact Hx|exact HC|]. rewrite Mo. destruct mon; simpl; rewrite ?Bool.orb_true_r; reflexivity.
         -- destruct mon.
            ++ destruct (same_state y x) eqn:Ss; [|discriminate].
               apply seqo_done in H2 as [g2 [z [t2 [h2 [H3 H4]]]]]. inversion H4; subst.
-              eapply BFoNext; [eapply IH1; exact H1|exact Hx|rewrite HC; reflexivity|exact Mo|exact Ss|eapply IHfo; exact H3].
-           ++ inversion H2; subst. eapply BFoLast; [eapply IH1; exact H1|exact Hx|rewrite HC; reflexivity|]. rewrite Mo. reflexivity.
+              eapply BFoNext; [eapply IH1; exact H1|exact Hx|exact HC|exact Mo|exact Ss|eapply IHfo; exact H3].
+           ++ inversion H2; subst. eapply BFoLast; [eapply IH1; exact H1|exact Hx|exact HC|]. rewrite Mo. reflexivity.
     + destruct (x_stop y || x_done y) eqn:Sd; [discriminate|]. apply Bool.orb_false_iff in Sd as [Hs Hd].
       destruct (kveqb (x_vars y) (x_vars x) && kvset_eqb (x_props y) (x_props x)) eqn:Hv; [|discriminate].
       inversion H2; subst. eapply BFoOk; eauto.
@@ -1898,7 +1942,8 @@ Proof.
     + inversion H; subst. now apply BAStop.
     + destruct (x_exn x) as [e|] eqn:Hx.
       * destruct (select_catch x e cs) as [[ss|]|w] eqn:Sel; [| |discriminate].
-        -- apply seqo_done in H as [g1 [x1 [t1 [h1 [H1 H2]]]]].
+        -- destruct (real && x_cont x) eqn:Rc; [discriminate|].
+           apply seqo_done in H as [g1 [x1 [t1 [h1 [H1 H2]]]]].
            destruct (x_stop x1) eqn:Hs1.
            ++ inversion H2; subst. eapply BACaughtStop; eauto.
            ++ apply seqo_done in H2 as [g2 [x2 [t2 [h2 [H3 H4]]]]].
@@ -1933,8 +1978,8 @@ Definition runoc (fuel : nat) (oc : option oncomp) (g : gstate) (x : exchange) :
           match oc_input o x with
           | None => OUns "OC: the original message of an aggregator's output is not documented"
           | Some y0 =>
-              if oc_before o && real && oc_orig o && match x_mep x with InOut => true | _ => false end
-              then OUns "REAL: BeforeConsumer + useOriginalMessage on an InOut exchange sees the current message (finding)" else
+              if oc_before o && real && oc_orig o
+              then OUns "REAL: BeforeConsumer + useOriginalMessage can see the current message (InOut, or after a transform: finding)" else
               if negb (oc_before o) && real && oc_orig o && x_done x && match EHc with EHDlc _ _ UOMessage => true | _ => false end
               then OUns "REAL: the onCompletion copy shares the original message the dead letter channel put on the exchange (finding)" else
               seqo (run fuel g y0 (oc_steps o)) (fun g' y t h =>
@@ -1955,7 +2000,7 @@ Proof.
   intros fuel oc g x g' x' t h H. destruct oc as [o|]; simpl in H; [|inversion H; subst; constructor].
   destruct (oc_fires o x) as [[|]|w] eqn:F; [|inversion H; subst; now apply BOcSkip|discriminate].
   destruct (oc_input o x) as [y0|] eqn:I; [|discriminate].
-  destruct (oc_before o && real && oc_orig o && match x_mep x with InOut => true | _ => false end) eqn:Rb; [discriminate|].
+  destruct (oc_before o && real && oc_orig o) eqn:Rb; [discriminate|].
   destruct (negb (oc_before o) && real && oc_orig o && x_done x && match EHc with EHDlc _ _ UOMessage => true | _ => false end) eqn:Ra; [discriminate|].
   apply seqo_done in H as [g1 [y [t1 [h1 [H1 H2]]]]].
   apply (proj1 (run_sound fuel)) in H1.
@@ -1991,7 +2036,7 @@ Fixpoint run_case_ (real : bool) (C : list clause) (E : ehconf) (OC : option onc
       match find_route P (s_to s) with
       | None => ([SUns "DC: send to direct: without a consumer"], g)
       | Some r =>
-          match run P real C E fuel g (new_exchange (s_mep s) (s_body s) (s_headers s)) (r_steps r) with
+          match run P real C E fuel g (set_route (new_exchange (s_mep s) (s_body s) (s_headers s)) (r_id r)) (r_steps r) with
           | ODone g' x t h =>
               (* the onCompletion is on the first route (the one the sends go to): route scope *)
               let oc := match P with r0 :: _ => if ceqs (r_from r0) (s_to s) then OC else None | [] => None end in
@@ -2103,7 +2148,7 @@ Proof. vm_compute. reflexivity. Qed.
 Definition iae : chars := str "java.lang.IllegalArgumentException".
 Definition nfe : chars := str "java.lang.NumberFormatException".
 Definition cl (ts : list chars) (h : option bool) (k : bool) (n : nat) (ss : list step) : clause :=
-  mkClause ts None h k n ss None false.
+  mkClause ts None h k n ss None false None.
 Definition failing : list step := [SSetBody (sx "x"); SThrow iae (str "boom"); STo (EMock (str "after"))].
 Definition runC (C : list clause) (ss : list step) : out := run [] false C EHDefault 30 g0 (new_exchange InOut VNull []) ss.
 (** [EHP.60-67]: handled: the route stops, the response is what the block produces, no exception to the caller. *)

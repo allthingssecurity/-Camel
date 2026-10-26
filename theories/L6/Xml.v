@@ -5,6 +5,7 @@
     generated case through this text instead of the model API, and compares with the same expected trace).
     Legend (paths under docs/):
       [XIO] dsl/camel-xml-io-dsl/src/main/docs/java-xml-io-dsl.adoc
+      [RC]  docs/user-manual/modules/ROOT/pages/route-configuration.adoc
       [M:x] model/x.json: the "kind" of each option: "attribute" is an XML attribute, "element" / "expression" a
             child element, "outputs" the steps as child elements (the EIP pages show the same in their XML tabs)
       [SPL] core/camel-core-engine/src/main/docs/modules/eips/pages/split-eip.adoc (the #class: reference syntax)
@@ -172,11 +173,20 @@ Definition xoc (o : oncomp) : chars :=
                        (if oc_before o then attr "mode" (s "BeforeConsumer") else []) ++
                        (if oc_orig o then attr "useOriginalMessage" (s "true") else []))
     ((match oc_when o with Some p => elem "onWhen" [] (xexpr p) | None => [] end) ++ xsteps (oc_steps o)).
+(*! R L6.xml.onException.scope DOC [RC.137-141] [RC.253-280] [XIO.61-72] *)
+(** Route scoped clauses are elements of their route; the global ones are in a nameless routeConfiguration, "used as
+    default/fallback configuration, for routes which have NOT been explicitly assigned route configurations"
+    [RC.139-141] (Camel merges route configurations into the same global list as the RouteBuilder clauses,
+    RoutesDefinition.prepareRoute: TRUST.md). The root is [<camel>] [XIO.61-72]. *)
+Definition clause_of_route (rid : chars) (k : clause) : bool := match c_scope k with Some r => ceqs r rid | None => false end.
+Definition clause_global (k : clause) : bool := match c_scope k with Some _ => false | None => true end.
 Definition xroute (C : list clause) (E : ehconf) (oc : option oncomp) (r : route) : chars :=
   elem "route" (attr "id" (r_id r))
        (xeh E ++ empty "from" (attr "uri" (s "direct:" ++ r_from r)) ++
-        (match oc with Some o => xoc o | None => [] end) ++ concat_with [] (map xclause C) ++ xsteps (r_steps r)).
+        (match oc with Some o => xoc o | None => [] end) ++ concat_with [] (map xclause (filter (clause_of_route (r_id r)) C)) ++
+        xsteps (r_steps r)).
 (** The onCompletion is on the first route (L2 run_case: the route the sends go to). *)
 Definition xml_program (C : list clause) (E : ehconf) (OC : option oncomp) (P : list route) : chars :=
-  elem "routes" (attr "xmlns" (s "http://camel.apache.org/schema/xml-io"))
-    (concat_with [] (match P with [] => [] | r0 :: rs => xroute C E OC r0 :: map (xroute C E None) rs end)).
+  elem "camel" []
+    ((match filter clause_global C with [] => [] | G => elem "routeConfiguration" [] (concat_with [] (map xclause G)) end) ++
+     concat_with [] (match P with [] => [] | r0 :: rs => xroute C E OC r0 :: map (xroute C E None) rs end)).

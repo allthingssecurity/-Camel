@@ -110,7 +110,8 @@ let pclause (k : clause) =
   ^ (match k.c_when with None -> "(none)" | Some p -> ex p) ^ " "
   ^ (match k.c_handled with None -> "-" | Some true -> "1" | Some false -> "0") ^ " "
   ^ (if k.c_continued then "1" else "0") ^ " " ^ string_of_int k.c_redeliveries ^ " "
-  ^ (match k.c_retry with None -> "(none)" | Some p -> ex p) ^ " " ^ (if k.c_onredel then "1" else "0") ^ psteps k.c_steps ^ ")"
+  ^ (match k.c_retry with None -> "(none)" | Some p -> ex p) ^ " " ^ (if k.c_onredel then "1" else "0") ^ " "
+  ^ (match k.c_scope with None -> "(scope)" | Some r -> "(scope " ^ pc r ^ ")") ^ psteps k.c_steps ^ ")"
 let pclauses cs = "(clauses" ^ String.concat "" (List.map (fun k -> " " ^ pclause k) cs) ^ ")"
 (* the program's error handler: nothing for the default one, (eh dlc <mock> <redeliveries> none|msg|body) *)
 let peh = function
@@ -300,7 +301,7 @@ let gen_clauses () : clause list =
           c_handled = h; c_continued = k;
           c_redeliveries = (if Random.int 3 = 0 then 1 + Random.int 2 else 0);
           c_steps = gen_block ();
-          c_retry = None; c_onredel = false })
+          c_retry = None; c_onredel = false; c_scope = None })
     |> List.map (fun k ->
         (* retryWhile: always bounded by the redelivery counter ("${header.CamelRedeliveryCounter} < N", maybe && a
            predicate), never with maximumRedeliveries (which would add the max counter header) *)
@@ -348,6 +349,9 @@ let () =
   if fam = "rw" then rw_bias := 2;
   for i = 1 to count do
     let clauses, routes, sends = if fam = "combo" then Combo.gen_case () else gen_case () in
+    (* route scoped clauses (L3.onException.scope): one in 4 (family scope: one in 2), on one of the program's routes *)
+    let clauses = List.map (fun k -> if Random.int (if fam = "scope" then 2 else 4) = 0
+                                     then { k with c_scope = Some (pick (List.map (fun r -> r.r_id) routes)) } else k) clauses in
     let eh = if fam = "dlc" then EHDlc (chars "dead", Random.int 3, pick [ UONone; UOMessage; UOBody ]) else gen_eh () in
     let clauses = if fam = "dlc" && Random.bool () then [] else clauses in
     let oc = if fam = "oc" || Random.int 2 = 0 then gen_oc () else None in
@@ -355,7 +359,7 @@ let () =
     count_hits rs;
     let expected = String.concat " " (List.map sres_text rs) ^ " G=" ^ kvs g.g_global in
     Printf.printf "%s-%d-%d\t%s\t%s\t%s\t%s\t%s\t%s\n" fam seed i (String.concat " " (pclauses clauses :: peh eh @ poc oc @ List.map proute routes))
-      (String.concat " " (List.map psend sends)) expected fam (pc (xml_program clauses eh oc routes)) (pc (yaml_program clauses eh oc routes))
+      (String.concat " " (List.map psend sends)) expected fam (pc (xml_program clauses eh oc routes)) (if List.exists (fun k -> k.c_scope <> None) clauses then "-" else pc (yaml_program clauses eh oc routes))
   done
   ;
   if Array.length Sys.argv > 4 then begin

@@ -359,7 +359,8 @@ type exchange = { x_msg : message; x_props : (chars * val0) list;
                   x_vars : (chars * val0) list; x_mep : mep;
                   x_exn : exn option; x_stop : bool; x_eh : bool;
                   x_seen : bool; x_done : bool; x_uow : (chars * chars) list;
-                  x_orig : message option }
+                  x_orig : message option; x_route : chars; x_cont : 
+                  bool }
 
 type agroup = { ag_x : exchange; ag_n : int; ag_in : exchange list }
 
@@ -373,6 +374,10 @@ type gstate = { g_global : (chars * val0) list;
 val g0 : gstate
 
 val new_exchange : mep -> val0 -> (chars * val0) list -> exchange
+
+val set_route : exchange -> chars -> exchange
+
+val set_cont : exchange -> bool -> exchange
 
 val with_msg : exchange -> message -> exchange
 
@@ -1129,7 +1134,8 @@ type route = { r_id : chars; r_from : chars; r_steps : step list }
 type clause = { c_ex : chars list; c_when : expr option;
                 c_handled : bool option; c_continued : bool;
                 c_redeliveries : int; c_steps : step list;
-                c_retry : expr option; c_onredel : bool }
+                c_retry : expr option; c_onredel : bool;
+                c_scope : chars option }
 
 type uomode =
 | UONone
@@ -1305,6 +1311,15 @@ val candidates :
 
 val min_score : (((int * int) * bool) * clause) list -> (int * int) option
 
+val in_scope : exchange -> clause -> bool
+
+val is_route_scoped : clause -> bool
+
+val has_clauses : clause list -> chars -> bool
+
+val pick_tied :
+  (((int * int) * bool) * clause) list -> (int * int) -> clause option r0
+
 val select_clause : clause list -> exchange -> exn -> clause option r0
 
 val clause_matches : clause list -> ehconf -> exchange -> bool
@@ -1319,6 +1334,8 @@ val eh_outcome_n :
   clause -> int -> exchange -> exn -> exchange -> exchange option
 
 val retry_n : int -> int -> expr -> exchange -> int r0
+
+val eh_max : ehconf -> int
 
 val redeliveries : ehconf -> clause -> exchange -> int r0
 
@@ -1425,6 +1442,10 @@ val xeh : ehconf -> chars
 
 val xoc : oncomp -> chars
 
+val clause_of_route : chars -> clause -> bool
+
+val clause_global : clause -> bool
+
 val xroute : clause list -> ehconf -> oncomp option -> route -> chars
 
 val xml_program :
@@ -1476,7 +1497,9 @@ val yeh : ehconf -> chars list
 
 val yoc : oncomp -> chars
 
-val yroute : ehconf -> bool -> route -> chars
+val yclause_global : clause -> bool
+
+val yroute : clause list -> ehconf -> bool -> route -> chars
 
 val yaml_program :
   clause list -> ehconf -> oncomp option -> route list -> chars

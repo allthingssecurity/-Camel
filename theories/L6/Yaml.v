@@ -172,10 +172,17 @@ Definition yoc (o : oncomp) : chars :=
       (if oc_orig o then [kv "useOriginalMessage" (jstr (s "true"))] else []) ++
       (match oc_when o with Some p => [kv "onWhen" (obj [exprf p])] | None => [] end) ++
       [kv "steps" (ysteps (oc_steps o))]))]])])].
-Definition yroute (E : ehconf) (rc : bool) (r : route) : chars :=
+(*! R L6.yaml.onException.scope DOC [YML.36] [M:onException] *)
+(** Global clauses are top-level entries (RouteBuilder scope [YML.36]). A route scoped clause has no YAML form here:
+    as an onException step, the YAML DSL takes the steps after it as its outputs (there is no [.end()]; runs/sc2-yaml-real:
+    "Route ... has no output processors"), so programs with route scoped clauses are not run through YAML (driver). *)
+Definition yclause_of_route (rid : chars) (k : clause) : bool := match c_scope k with Some r => ceqs r rid | None => false end.
+Definition yclause_global (k : clause) : bool := match c_scope k with Some _ => false | None => true end.
+Definition yroute (C : list clause) (E : ehconf) (rc : bool) (r : route) : chars :=
   obj [kv "route" (obj ([kv "id" (jstr (r_id r))] ++ yeh E ++
                         (if rc then [kv "routeConfigurationId" (jstr (s "ocConfig"))] else []) ++
-                        [kv "from" (obj [kv "uri" (jstr (s "direct:" ++ r_from r)); kv "steps" (ysteps (r_steps r))])]))].
+                        [kv "from" (obj [kv "uri" (jstr (s "direct:" ++ r_from r));
+                                         kv "steps" (ysteps (r_steps r))])]))].
 Definition yaml_program (C : list clause) (E : ehconf) (OC : option oncomp) (P : list route) : chars :=
-  arr (map yclause C ++ (match OC with Some o => [yoc o] | None => [] end) ++
-       match P with [] => [] | r0 :: rs => yroute E (match OC with Some _ => true | None => false end) r0 :: map (yroute E false) rs end).
+  arr (map yclause (filter yclause_global C) ++ (match OC with Some o => [yoc o] | None => [] end) ++
+       match P with [] => [] | r0 :: rs => yroute C E (match OC with Some _ => true | None => false end) r0 :: map (yroute C E false) rs end).

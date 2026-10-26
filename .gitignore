@@ -19,3 +19,5 @@ oracle/l5/l5spec.mli
 oracle/l4/lifecyclespec.ml
 oracle/l4/lifecyclespec.mli
 runs/*.log
+# red-team notes of the pipeline session (may name private checkouts): kept local
+findings/REDTEAM-*.md

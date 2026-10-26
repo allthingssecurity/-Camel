@@ -42,3 +42,11 @@ template.send("direct:a", ExchangePattern.InOut, e -> { e.getMessage().setBody("
   gets what they leave.
 - Real mode: the delta L3.onCompletion.before-original.real. For an InOut exchange in BeforeConsumer mode with
   useOriginalMessage there is no rule.
+
+## Also InOnly, after a transform (main session, runs/sc3-xml-real scope-717-829)
+In the harness, model API and XML DSL alike, an InOnly send reproduces it as soon as the route used `transform`:
+`transform(header B1)` or `transform(constant zz)` makes the BeforeConsumer + useOriginalMessage onCompletion see the
+current message. `setBody` does not. A Java DSL probe (OcBeforeOriginalProbe, transform variant) did not reproduce
+it for InOnly. The red-team should check what differs: the route built through RoutesDefinition.prepareRoute, or
+setUseOriginalMessage("true") against useOriginalMessage(). Plausibly the same cause, an OUT message that the as-is
+branch of prepareExchange leaves in place. The Real-mode delta now covers every MEP.

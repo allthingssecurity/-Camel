@@ -172,7 +172,7 @@ let clause ?(cls = []) ?(redeliver = false) () =
   let st = clause_block () in
   let red = if st = [] && h = None && not k && red = 0 then 1 else red in   (* an unconfigured clause is refused *)
   { c_ex; c_when = (if one_in 6 then Some (pred ()) else None); c_handled = h; c_continued = k;
-    c_redeliveries = red; c_steps = st; c_retry = None; c_onredel = false }
+    c_redeliveries = red; c_steps = st; c_retry = None; c_onredel = false; c_scope = None }
 
 let rdyn () =
   { r_id = chars "rdyn"; r_from = chars "rdyn";

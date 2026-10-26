@@ -104,3 +104,12 @@ Camel aa63c0a4cb94. Each entry: page and line, what it says, what Camel does, ev
   random-601-2900: a dead letter channel with maximumRedeliveries 2 and a clause with retryWhile give
   CamelRedeliveryMaxCounter=2). It is the same when the clause sets maximumRedeliveries itself
   (harness/probes/RetryWhileProbe.java: "retry<3 max=1"). Candidate: the header is absent only when no maximum applies.
+
+- exception-redelivery.adoc 17-19: "By default, any Exception Clause will *not* redeliver! (as it sets the
+  maximumRedeliveries option to 0)". That holds only for a clause with steps. A clause without steps and without its
+  own maximumRedeliveries uses the error handler's redelivery policy (ExceptionPolicy.createRedeliveryPolicy 114-128:
+  "if we have outputs, then do not inherit parent maximumRedeliveries ... this is the behavior Camel has always had").
+  So `onException(X.class).handled(true)` with no steps, under `deadLetterChannel(...).maximumRedeliveries(2)`,
+  retries the failing call 3 times; with one step it makes 1 attempt (harness/probes/OnRedeliveryInheritProbe.java,
+  also on 4.22.1 and 4.23.0). That is surprising for non-idempotent calls. Candidate: document the step-less case on
+  exception-redelivery.adoc and exception-clause.adoc.

@@ -256,7 +256,9 @@ Record exchange : Type := mkX {
   x_seen : bool;
   x_done : bool;
   x_uow : list (chars * chars);    (* ids this unit of work added to idempotent repositories: (node, key) *)
-  x_orig : option message }.        (* the original input message of the unit of work (dead-letter-channel.adoc 335-342); None: unknown *)
+  x_orig : option message;         (* the original input message of the unit of work (dead-letter-channel.adoc 335-342); None: unknown *)
+  x_route : chars;                 (* the id of the route the exchange is in (route scoped onException, exception-clause.adoc 152-161) *)
+  x_cont : bool }.                  (* an exception was continued on this exchange (Real-mode delta of a finding, L2/Route.v) *)
 
 (** An aggregation group: the aggregated exchange so far, how many exchanges it holds, and the incoming exchanges. *)
 Record agroup : Type := mkAG { ag_x : exchange; ag_n : nat; ag_in : list exchange }.
@@ -272,28 +274,32 @@ Record gstate : Type := mkG {
 Definition g0 : gstate := mkG [] [] [] [] [] [].
 
 Definition new_exchange (m : mep) (body : val) (hs : list (chars * val)) : exchange :=
-  mkX (mkMsg body hs) [] [] m None false true false false [] (Some (mkMsg body hs)).
+  mkX (mkMsg body hs) [] [] m None false true false false [] (Some (mkMsg body hs)) [] false.
 
+Definition set_route (x : exchange) (r : chars) : exchange :=
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x) r (x_cont x).
+Definition set_cont (x : exchange) (b : bool) : exchange :=
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x) (x_route x) b.
 Definition with_msg (x : exchange) (m : message) : exchange :=
-  mkX m (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x).
+  mkX m (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x) (x_route x) (x_cont x).
 Definition set_body (x : exchange) (v : val) : exchange := with_msg x (mkMsg v (m_headers (x_msg x))).
 Definition map_headers (f : list (chars * val) -> list (chars * val)) (x : exchange) : exchange :=
   with_msg x (mkMsg (m_body (x_msg x)) (f (m_headers (x_msg x)))).
 Definition map_props (f : list (chars * val) -> list (chars * val)) (x : exchange) : exchange :=
-  mkX (x_msg x) (f (x_props x)) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x).
+  mkX (x_msg x) (f (x_props x)) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x) (x_route x) (x_cont x).
 Definition map_vars (f : list (chars * val) -> list (chars * val)) (x : exchange) : exchange :=
-  mkX (x_msg x) (x_props x) (f (x_vars x)) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x).
+  mkX (x_msg x) (x_props x) (f (x_vars x)) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x) (x_route x) (x_cont x).
 (** A new exception (or none): not seen by an error handler yet. *)
 Definition set_exn (x : exchange) (e : option exn) : exchange :=
-  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) e (x_stop x) (x_eh x) false (x_done x) (x_uow x) (x_orig x).
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) e (x_stop x) (x_eh x) false (x_done x) (x_uow x) (x_orig x) (x_route x) (x_cont x).
 Definition set_stop (x : exchange) (b : bool) : exchange :=
-  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) b (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x).
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) b (x_eh x) (x_seen x) (x_done x) (x_uow x) (x_orig x) (x_route x) (x_cont x).
 Definition set_eh (x : exchange) (b : bool) : exchange :=
-  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) b (x_seen x) (x_done x) (x_uow x) (x_orig x).
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) b (x_seen x) (x_done x) (x_uow x) (x_orig x) (x_route x) (x_cont x).
 Definition set_seen (x : exchange) (b : bool) : exchange :=
-  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) b (x_done x) (x_uow x) (x_orig x).
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) b (x_done x) (x_uow x) (x_orig x) (x_route x) (x_cont x).
 Definition set_done (x : exchange) (b : bool) : exchange :=
-  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) b (x_uow x) (x_orig x).
+  mkX (x_msg x) (x_props x) (x_vars x) (x_mep x) (x_exn x) (x_stop x) (x_eh x) (x_seen x) b (x_uow x) (x_orig x) (x_route x) (x_cont x).
 
 Fixpoint aget (k : chars) (l : list (chars * list (chars * val))) : list (chars * val) :=
   match l with [] => [] | (k', v) :: r => if ceqs k k' then v else aget k r end.

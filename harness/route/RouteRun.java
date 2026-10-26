@@ -343,7 +343,7 @@ public class RouteRun {
         }
         // onRedelivery (L3.onRedelivery): the registry bean onRedel appends "r" to the header onr
         if (k.kids.get(7).atom.equals("1")) o.setOnRedeliveryRef("onRedel");
-        steps(o, k, 8);
+        steps(o, k, 9);
         return o;
     }
 
@@ -367,6 +367,10 @@ public class RouteRun {
                 .loadRoutes(org.apache.camel.support.ResourceHelper.fromString("yaml".equals(dsl) ? "memory:routes.yaml" : "memory:routes.xml", xml));
             return runSends(ctx, sends, events, globals);
         }
+        // global clauses (scope ()) are RouteBuilder scoped, as RoutesDefinition.onException makes them; a clause
+        // (scope r) is an output of route r (L3.onException.scope)
+        RoutesDefinition rs = new RoutesDefinition();
+        rs.setCamelContext(ctx);
         List<RouteDefinition> defs = new ArrayList<>();
         Sx clauses = null, eh = null, oc = null;
         boolean first = true;
@@ -397,11 +401,18 @@ public class RouteRun {
                 d.addOutput(o);
             }
             first = false;
-            // the program's onException clauses, as route-scoped copies on every route (TRUST.md)
-            if (clauses != null) for (int i = 1; i < clauses.kids.size(); i++) d.addOutput(onException(clauses.kids.get(i)));
+            if (clauses != null) for (int i = 1; i < clauses.kids.size(); i++) {
+                Sx k = clauses.kids.get(i), sc = k.kids.get(8);
+                if (sc.kids.size() > 1 && sc.a(1).equals(r.a(1))) d.addOutput(onException(k));
+            }
             steps(d, r, 3);
             defs.add(d);
         }
+        if (clauses != null) for (int i = 1; i < clauses.kids.size(); i++) {
+            Sx k = clauses.kids.get(i);
+            if (k.kids.get(8).kids.size() == 1) { OnExceptionDefinition o = onException(k); o.setRouteScoped(false); rs.getOnExceptions().add(o); }
+        }
+        for (RouteDefinition d : defs) { rs.route(d); rs.prepareRoute(d); }
         ctx.addRouteDefinitions(defs);
         return runSends(ctx, sends, events, globals);
     }
@@ -478,6 +489,9 @@ public class RouteRun {
                 try {
                     String dsl = System.getProperty("dsl");
                     String text = "xml".equals(dsl) && f.length > 5 ? unpct(f[5]) : "yaml".equals(dsl) && f.length > 6 ? unpct(f[6]) : null;
+                    if ("-".equals(text)) {   // no DSL form for this program (L6.yaml.onException.scope): counted, not compared
+                        unspec++; unspecWhy.merge("L6: no YAML form for route scoped onException", 1, Integer::sum); agree++; continue;
+                    }
                     got = runCase(f[1], f[2], new ArrayList<>(), globals, text, dsl);
                     long dt = System.currentTimeMillis() - c0;
                     if (dt > 2000) System.err.println("SLOW " + dt + "ms " + f[0]);

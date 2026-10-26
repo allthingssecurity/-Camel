@@ -111,3 +111,10 @@ so far are the aggregator's deferred output (timing), not leaks. A background hu
 - Family `rw`: retryWhile / onRedelivery on every second clause. Runs: rw2-real 5000 / 0, rw2-doc 5000 / 97,
   rw2-rand-real 4000 / 0, rw2-dlc-real 3000 / 0, rw2-oc-real 3000 / 0, rw2-xml-real 3000 / 0.
 - combo-real2 (combo family, Real, after L3.dlc settled): 3000 cases, 0 mismatches, 26 hangs (now reported).
+
+## L3 global vs route scoped onException (2026-10-26)
+- c_scope on the clause, x_route on the exchange (set by the send and by direct:), select_clause per scope.
+  Family `scope`: route scoped clauses on half the clauses.
+- What the first runs showed: the CODE "with clauses" rules are per route (has_clauses); onRedelivery is a redelivery
+  ... (corrected: a clause WITHOUT STEPS inherits the error handler's maximumRedeliveries, onRedelivery does not; DOC-BUG); the doTry escape finding crosses direct:; finding C (doCatch skipped
+  after a continued exception) also without a called route.

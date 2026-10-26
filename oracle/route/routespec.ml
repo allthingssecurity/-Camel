@@ -2169,7 +2169,8 @@ type exchange = { x_msg : message; x_props : (chars * val0) list;
                   x_vars : (chars * val0) list; x_mep : mep;
                   x_exn : exn option; x_stop : bool; x_eh : bool;
                   x_seen : bool; x_done : bool; x_uow : (chars * chars) list;
-                  x_orig : message option }
+                  x_orig : message option; x_route : chars; x_cont : 
+                  bool }
 
 type agroup = { ag_x : exchange; ag_n : int; ag_in : exchange list }
 
@@ -2192,14 +2193,31 @@ let new_exchange m body hs =
   { x_msg = { m_body = body; m_headers = hs }; x_props = []; x_vars = [];
     x_mep = m; x_exn = None; x_stop = false; x_eh = true; x_seen = false;
     x_done = false; x_uow = []; x_orig = (Some { m_body = body; m_headers =
-    hs }) }
+    hs }); x_route = []; x_cont = false }
+
+(** val set_route : exchange -> chars -> exchange **)
+
+let set_route x r =
+  { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
+    x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = x.x_seen;
+    x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig; x_route = r;
+    x_cont = x.x_cont }
+
+(** val set_cont : exchange -> bool -> exchange **)
+
+let set_cont x b =
+  { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
+    x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = x.x_seen;
+    x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig; x_route =
+    x.x_route; x_cont = b }
 
 (** val with_msg : exchange -> message -> exchange **)
 
 let with_msg x m =
   { x_msg = m; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = x.x_seen;
-    x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
+    x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig; x_route =
+    x.x_route; x_cont = x.x_cont }
 
 (** val set_body : exchange -> val0 -> exchange **)
 
@@ -2218,7 +2236,8 @@ let map_headers f x =
 let map_props f x =
   { x_msg = x.x_msg; x_props = (f x.x_props); x_vars = x.x_vars; x_mep =
     x.x_mep; x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen =
-    x.x_seen; x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
+    x.x_seen; x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig; x_route =
+    x.x_route; x_cont = x.x_cont }
 
 (** val map_vars :
     ((chars * val0) list -> (chars * val0) list) -> exchange -> exchange **)
@@ -2226,42 +2245,48 @@ let map_props f x =
 let map_vars f x =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = (f x.x_vars); x_mep =
     x.x_mep; x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen =
-    x.x_seen; x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
+    x.x_seen; x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig; x_route =
+    x.x_route; x_cont = x.x_cont }
 
 (** val set_exn : exchange -> exn option -> exchange **)
 
 let set_exn x e =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = e; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = false; x_done =
-    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
+    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig; x_route = x.x_route;
+    x_cont = x.x_cont }
 
 (** val set_stop : exchange -> bool -> exchange **)
 
 let set_stop x b =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = b; x_eh = x.x_eh; x_seen = x.x_seen; x_done =
-    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
+    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig; x_route = x.x_route;
+    x_cont = x.x_cont }
 
 (** val set_eh : exchange -> bool -> exchange **)
 
 let set_eh x b =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = b; x_seen = x.x_seen; x_done =
-    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
+    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig; x_route = x.x_route;
+    x_cont = x.x_cont }
 
 (** val set_seen : exchange -> bool -> exchange **)
 
 let set_seen x b =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = b; x_done =
-    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
+    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig; x_route = x.x_route;
+    x_cont = x.x_cont }
 
 (** val set_done : exchange -> bool -> exchange **)
 
 let set_done x b =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = x.x_seen;
-    x_done = b; x_uow = x.x_uow; x_orig = x.x_orig }
+    x_done = b; x_uow = x.x_uow; x_orig = x.x_orig; x_route = x.x_route;
+    x_cont = x.x_cont }
 
 (** val aget :
     chars -> (chars * (chars * val0) list) list -> (chars * val0) list **)
@@ -18745,7 +18770,8 @@ type route = { r_id : chars; r_from : chars; r_steps : step list }
 type clause = { c_ex : chars list; c_when : expr option;
                 c_handled : bool option; c_continued : bool;
                 c_redeliveries : int; c_steps : step list;
-                c_retry : expr option; c_onredel : bool }
+                c_retry : expr option; c_onredel : bool;
+                c_scope : chars option }
 
 type uomode =
 | UONone
@@ -18881,7 +18907,8 @@ let sub_of x v =
   { x_msg = { m_body = v; m_headers = x.x_msg.m_headers }; x_props =
     x.x_props; x_vars = x.x_vars; x_mep = x.x_mep; x_exn = None; x_stop =
     false; x_eh = x.x_eh; x_seen = false; x_done = false; x_uow = []; x_orig =
-    (Some { m_body = v; m_headers = x.x_msg.m_headers }) }
+    (Some { m_body = v; m_headers = x.x_msg.m_headers }); x_route = x.x_route;
+    x_cont = x.x_cont }
 
 (** val cee : exn -> exn **)
 
@@ -18900,7 +18927,8 @@ let has_maxfail o =
 let copy_of x =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = None; x_stop = false; x_eh = x.x_eh; x_seen = false; x_done =
-    false; x_uow = []; x_orig = (Some x.x_msg) }
+    false; x_uow = []; x_orig = (Some x.x_msg); x_route = x.x_route; x_cont =
+    x.x_cont }
 
 (** val kvin : chars -> val0 -> (chars * val0) list -> bool **)
 
@@ -19033,7 +19061,7 @@ let is_closed g id k =
 let fresh x =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = None; x_stop = false; x_eh = true; x_seen = false; x_done = false;
-    x_uow = []; x_orig = None }
+    x_uow = []; x_orig = None; x_route = x.x_route; x_cont = x.x_cont }
 
 (** val sdt : step -> bool **)
 
@@ -20863,7 +20891,8 @@ let loop_copy orig cur =
   let c = copy_of orig in
   { x_msg = c.x_msg; x_props = c.x_props; x_vars = c.x_vars; x_mep = c.x_mep;
   x_exn = c.x_exn; x_stop = c.x_stop; x_eh = c.x_eh; x_seen = c.x_seen;
-  x_done = c.x_done; x_uow = cur.x_uow; x_orig = cur.x_orig }
+  x_done = c.x_done; x_uow = cur.x_uow; x_orig = cur.x_orig; x_route =
+  cur.x_route; x_cont = cur.x_cont }
 
 (** val rce : exn **)
 
@@ -20881,7 +20910,8 @@ let add_key =
 let add_uow x id k =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = x.x_seen;
-    x_done = x.x_done; x_uow = ((id, k) :: x.x_uow); x_orig = x.x_orig }
+    x_done = x.x_done; x_uow = ((id, k) :: x.x_uow); x_orig = x.x_orig;
+    x_route = x.x_route; x_cont = x.x_cont }
 
 (** val remove_key : gstate -> (chars * chars) -> gstate **)
 
@@ -21193,35 +21223,79 @@ let rec min_score = function
 | p :: r ->
   let (p0, _) = p in let (sc, _) = p0 in best (Some sc) (min_score r)
 
+(** val in_scope : exchange -> clause -> bool **)
+
+let in_scope x k =
+  match k.c_scope with
+  | Some r -> ceqs r x.x_route
+  | None -> true
+
+(** val is_route_scoped : clause -> bool **)
+
+let is_route_scoped k =
+  match k.c_scope with
+  | Some _ -> true
+  | None -> false
+
+(** val has_clauses : clause list -> chars -> bool **)
+
+let has_clauses c rid =
+  existsb (fun k -> match k.c_scope with
+                    | Some r -> ceqs r rid
+                    | None -> true)
+    c
+
+(** val pick_tied :
+    (((int * int) * bool) * clause) list -> (int * int) -> clause option r0 **)
+
+let pick_tied l m =
+  let tied =
+    filter (fun pat -> let (y, _) = pat in let (sc, _) = y in eq2 sc m) l
+  in
+  (match tied with
+   | [] ->
+     if existsb (fun pat -> let (y, _) = pat in let (_, w) = y in w) tied
+     then Uns0 "EC: equally close onException clauses with onWhen"
+     else (match rev tied with
+           | [] -> Ok0 None
+           | p :: _ -> let (_, k) = p in Ok0 (Some k))
+   | p :: l0 ->
+     let (_, k) = p in
+     (match l0 with
+      | [] -> Ok0 (Some k)
+      | _ :: _ ->
+        if existsb (fun pat -> let (y, _) = pat in let (_, w) = y in w) tied
+        then Uns0 "EC: equally close onException clauses with onWhen"
+        else (match rev tied with
+              | [] -> Ok0 None
+              | p0 :: _ -> let (_, k0) = p0 in Ok0 (Some k0))))
+
 (** val select_clause : clause list -> exchange -> exn -> clause option r0 **)
 
 let select_clause c x e =
-  match candidates x e c with
+  match candidates x e (filter (in_scope x) c) with
   | Ok0 l ->
-    (match min_score l with
-     | Some m ->
-       let tied =
-         filter (fun pat -> let (y, _) = pat in let (sc, _) = y in eq2 sc m) l
-       in
-       (match tied with
-        | [] ->
-          if existsb (fun pat -> let (y, _) = pat in let (_, w) = y in w) tied
-          then Uns0 "EC: equally close onException clauses with onWhen"
-          else (match rev tied with
-                | [] -> Ok0 None
-                | p :: _ -> let (_, k) = p in Ok0 (Some k))
-        | p :: l0 ->
-          let (_, k) = p in
-          (match l0 with
-           | [] -> Ok0 (Some k)
-           | _ :: _ ->
-             if existsb (fun pat -> let (y, _) = pat in let (_, w) = y in w)
-                  tied
-             then Uns0 "EC: equally close onException clauses with onWhen"
-             else (match rev tied with
-                   | [] -> Ok0 None
-                   | p0 :: _ -> let (_, k0) = p0 in Ok0 (Some k0))))
-     | None -> Ok0 None)
+    let lr = filter (fun pat -> let (_, k) = pat in is_route_scoped k) l in
+    let lg =
+      filter (fun pat -> let (_, k) = pat in negb (is_route_scoped k)) l
+    in
+    (match min_score lr with
+     | Some mr ->
+       (match min_score lg with
+        | Some mg ->
+          if Nat.ltb (fst mr) (fst mg)
+          then pick_tied lr mr
+          else if Nat.ltb (fst mg) (fst mr)
+               then pick_tied lg mg
+               else if (=) (snd mr) (snd mg)
+                    then pick_tied lr mr
+                    else Uns0
+                           "EC: route and global clauses equally close by class but not by the nested cause (tie rules' order not documented)"
+        | None -> pick_tied lr mr)
+     | None ->
+       (match min_score lg with
+        | Some mg -> pick_tied lg mg
+        | None -> Ok0 None))
   | Uns0 w -> Uns0 w
 
 (** val clause_matches : clause list -> ehconf -> exchange -> bool **)
@@ -21277,8 +21351,12 @@ let eh_outcome_n k n0 x e y =
   if k.c_continued
   then (match k.c_handled with
         | Some b ->
-          if b then None else Some (drop_redelivery_headers (set_eh y x.x_eh))
-        | None -> Some (drop_redelivery_headers (set_eh y x.x_eh)))
+          if b
+          then None
+          else Some
+                 (set_cont (drop_redelivery_headers (set_eh y x.x_eh)) true)
+        | None ->
+          Some (set_cont (drop_redelivery_headers (set_eh y x.x_eh)) true))
   else (match k.c_handled with
         | Some b ->
           if b
@@ -21318,6 +21396,12 @@ let rec retry_n fuel k p x =
     | PUns0 w -> Uns0 w)
     fuel
 
+(** val eh_max : ehconf -> int **)
+
+let eh_max = function
+| EHDefault -> 0
+| EHDlc (_, n0, _) -> n0
+
 (** val redeliveries : ehconf -> clause -> exchange -> int r0 **)
 
 let redeliveries eHc k x =
@@ -21339,7 +21423,15 @@ let redeliveries eHc k x =
           (fun _ -> Uns0
           "ER/DLC: retryWhile with a maximumRedeliveries inherited from the error handler (max counter header: docs conflict)")
           n0))
-  | None -> Ok0 k.c_redeliveries
+  | None ->
+    Ok0
+      ((fun fO fS n -> if n=0 then fO () else fS (n-1))
+         (fun _ ->
+         match k.c_steps with
+         | [] -> eh_max eHc
+         | _ :: _ -> 0)
+         (fun n0 -> Stdlib.Int.succ n0)
+         k.c_redeliveries)
 
 (** val onr_apply : exchange -> exchange **)
 
@@ -21399,9 +21491,7 @@ let surface x =
 
 let default_failed c x e =
   let x1 = set_seen (set_exn x (Some e)) x.x_eh in
-  if (&&) x.x_eh (match c with
-                  | [] -> false
-                  | _ :: _ -> true)
+  if (&&) x.x_eh (has_clauses c x.x_route)
   then not_redelivered_headers 0 x1
   else x1
 
@@ -21607,25 +21697,41 @@ let run0 p real c eHc =
          | EDirect n0 ->
            (match find_route p n0 with
             | Some r ->
-              seqo (run1 f g (set_eh x true) r.r_steps) (fun g' x' t h ->
+              seqo (run1 f g (set_route (set_eh x true) r.r_id) r.r_steps)
+                (fun g' x' t h ->
                 if x'.x_done
                 then (match eHc with
                       | EHDefault ->
                         OUns
                           "EH: an exception handled in a route called by direct: (does the caller continue?) not documented"
                       | EHDlc (_, _, _) ->
-                        (match c with
-                         | [] ->
-                           ODone (g', (set_eh x' x.x_eh), t,
-                             ("L2.to.direct" :: ("L3.dlc.direct" :: h)))
-                         | _ :: _ ->
-                           OUns
-                             "EH: an exception handled in a route called by direct: (does the caller continue?) not documented"))
+                        if has_clauses c r.r_id
+                        then OUns
+                               "EH: an exception handled in a route called by direct: (does the caller continue?) not documented"
+                        else ODone (g',
+                               (set_route (set_eh x' x.x_eh) x.x_route), t,
+                               ("L2.to.direct" :: ("L3.dlc.direct" :: h))))
                 else if clause_matches c eHc x'
                      then OUns
                             "EH: a failure from a route called by direct: that a clause of the caller matches: not documented"
-                     else ODone (g', (set_eh x' x.x_eh), t,
-                            ("L2.to.direct" :: ("L3.direct.boundary" :: h))))
+                     else if (&&)
+                               ((&&)
+                                 ((&&)
+                                   ((&&) real
+                                     (match x'.x_exn with
+                                      | Some _ -> true
+                                      | None -> false))
+                                   x'.x_seen)
+                                 (has_clauses c x.x_route))
+                               (negb (has_clauses c r.r_id))
+                          then OUns
+                                 "REAL: an exception out of a doTry in a called route without clauses, back in a caller with clauses (finding)"
+                          else ODone (g',
+                                 (set_route (set_eh x' x.x_eh) x.x_route), t,
+                                 ("L2.to.direct" :: ("L3.direct.boundary" :: (
+                                 if existsb is_route_scoped c
+                                 then "L3.onException.scope" :: h
+                                 else h)))))
             | None ->
               OUns
                 "DC: send to direct: without a consumer (block/timeout not modelled)")
@@ -21717,10 +21823,7 @@ let run0 p real c eHc =
           seqo (runaft f g1 x1 cs fin) (fun g2 x2 t2 h2 ->
             if (&&)
                  ((&&) ((&&) real x.x_eh)
-                   ((||) (match c with
-                          | [] -> false
-                          | _ :: _ -> true)
-                     (is_dlc eHc)))
+                   ((||) (has_clauses c x.x_route) (is_dlc eHc)))
                  (match x2.x_exn with
                   | Some _ -> true
                   | None -> false)
@@ -22023,29 +22126,27 @@ let run0 p real c eHc =
           seqo (run2 f g x b) (fun g1 y t1 h1 ->
             match y.x_exn with
             | Some e ->
-              (match c with
-               | [] ->
-                 (match fo_monitored real exs e with
-                  | Ok0 mon ->
-                    ((fun fO fS n -> if n=0 then fO () else fS (n-1))
-                       (fun _ -> ODone (g1, y, t1, h1))
-                       (fun _ ->
-                       match bs' with
-                       | [] -> ODone (g1, y, t1, h1)
-                       | _ :: _ ->
-                         if mon
-                         then if same_state y x
-                              then seqo (runfo f g1 x exs k' bs')
-                                     (fun g2 z0 t2 h2 -> ODone (g2, z0,
-                                     (app t1 t2), (app h1 h2)))
-                              else OUns
-                                     "FO: failing over after an attempt that changed the exchange not documented"
-                         else ODone (g1, y, t1, h1))
-                       k')
-                  | Uns0 w -> OUns w)
-               | _ :: _ ->
-                 OUns
-                   "FO: a failover attempt failing in a route with onException clauses (inheritErrorHandler) not modelled")
+              if has_clauses c x.x_route
+              then OUns
+                     "FO: a failover attempt failing in a route with onException clauses (inheritErrorHandler) not modelled"
+              else (match fo_monitored real exs e with
+                    | Ok0 mon ->
+                      ((fun fO fS n -> if n=0 then fO () else fS (n-1))
+                         (fun _ -> ODone (g1, y, t1, h1))
+                         (fun _ ->
+                         match bs' with
+                         | [] -> ODone (g1, y, t1, h1)
+                         | _ :: _ ->
+                           if mon
+                           then if same_state y x
+                                then seqo (runfo f g1 x exs k' bs')
+                                       (fun g2 z0 t2 h2 -> ODone (g2, z0,
+                                       (app t1 t2), (app h1 h2)))
+                                else OUns
+                                       "FO: failing over after an attempt that changed the exchange not documented"
+                           else ODone (g1, y, t1, h1))
+                         k')
+                    | Uns0 w -> OUns w)
             | None ->
               if (||) y.x_stop y.x_done
               then OUns
@@ -22106,14 +22207,20 @@ let run0 p real c eHc =
                | Ok0 a ->
                  (match a with
                   | Some ss ->
-                    seqo (run1 f g (set_exn x None) ss) (fun g1 x1 t1 h1 ->
-                      if x1.x_stop
-                      then ODone (g1, x1, t1,
-                             ("L3.doCatch.stop" :: ("L3.doCatch.select" :: h1)))
-                      else seqo (runfin f g1 (set_exn x1 None) x1.x_exn fin)
-                             (fun g2 x2 t2 h2 -> ODone (g2, x2, (app t1 t2),
-                             ("L3.doCatch.caught" :: ("L3.doCatch.select" :: 
-                             (app h1 h2))))))
+                    if (&&) real x.x_cont
+                    then OUns
+                           "REAL: a doCatch after an exception was continued on the exchange is skipped (finding)"
+                    else seqo (run1 f g (set_exn x None) ss)
+                           (fun g1 x1 t1 h1 ->
+                           if x1.x_stop
+                           then ODone (g1, x1, t1,
+                                  ("L3.doCatch.stop" :: ("L3.doCatch.select" :: h1)))
+                           else seqo
+                                  (runfin f g1 (set_exn x1 None) x1.x_exn fin)
+                                  (fun g2 x2 t2 h2 -> ODone (g2, x2,
+                                  (app t1 t2),
+                                  ("L3.doCatch.caught" :: ("L3.doCatch.select" :: 
+                                  (app h1 h2))))))
                   | None ->
                     tag "L3.doTry.uncaught"
                       (runfin f g (set_exn x None) (Some e) fin))
@@ -22188,12 +22295,9 @@ let runoc p real c eHc fuel oc g x =
        if b
        then (match oc_input o x with
              | Some y0 ->
-               if (&&) ((&&) ((&&) o.oc_before real) o.oc_orig)
-                    (match x.x_mep with
-                     | InOnly -> false
-                     | InOut -> true)
+               if (&&) ((&&) o.oc_before real) o.oc_orig
                then OUns
-                      "REAL: BeforeConsumer + useOriginalMessage on an InOut exchange sees the current message (finding)"
+                      "REAL: BeforeConsumer + useOriginalMessage can see the current message (InOut, or after a transform: finding)"
                else if (&&)
                          ((&&) ((&&) ((&&) (negb o.oc_before) real) o.oc_orig)
                            x.x_done)
@@ -22269,7 +22373,9 @@ let rec run_case_ real c e oC fuel p g = function
   (match find_route p s1.s_to with
    | Some r ->
      (match run0 p real c e fuel g
-              (new_exchange s1.s_mep s1.s_body s1.s_headers) r.r_steps with
+              (set_route (new_exchange s1.s_mep s1.s_body s1.s_headers)
+                r.r_id)
+              r.r_steps with
       | ODone (g', x, t, h) ->
         let oc =
           match p with
@@ -22630,6 +22736,20 @@ let xoc o =
        | None -> [])
       (xsteps o.oc_steps))
 
+(** val clause_of_route : chars -> clause -> bool **)
+
+let clause_of_route rid k =
+  match k.c_scope with
+  | Some r -> ceqs r rid
+  | None -> false
+
+(** val clause_global : clause -> bool **)
+
+let clause_global k =
+  match k.c_scope with
+  | Some _ -> false
+  | None -> true
+
 (** val xroute : clause list -> ehconf -> oncomp option -> route -> chars **)
 
 let xroute c e oc r =
@@ -22639,17 +22759,24 @@ let xroute c e oc r =
         (app (match oc with
               | Some o -> xoc o
               | None -> [])
-          (app (concat_with [] (map xclause c)) (xsteps r.r_steps)))))
+          (app
+            (concat_with [] (map xclause (filter (clause_of_route r.r_id) c)))
+            (xsteps r.r_steps)))))
 
 (** val xml_program :
     clause list -> ehconf -> oncomp option -> route list -> chars **)
 
 let xml_program c e oC p =
-  elem "routes" (attr "xmlns" (s "http://camel.apache.org/schema/xml-io"))
-    (concat_with []
-      (match p with
+  elem "camel" []
+    (app
+      (match filter clause_global c with
        | [] -> []
-       | r1 :: rs -> (xroute c e oC r1) :: (map (xroute c e None) rs)))
+       | c0 :: l ->
+         elem "routeConfiguration" [] (concat_with [] (map xclause (c0 :: l))))
+      (concat_with []
+        (match p with
+         | [] -> []
+         | r1 :: rs -> (xroute c e oC r1) :: (map (xroute c e None) rs))))
 
 (** val s0 : string -> chars **)
 
@@ -23186,9 +23313,16 @@ let yoc o =
                                                                     (ysteps
                                                                     o.oc_steps)) :: []))))))) :: [])) :: []))) :: [])))) :: [])
 
-(** val yroute : ehconf -> bool -> route -> chars **)
+(** val yclause_global : clause -> bool **)
 
-let yroute e rc r =
+let yclause_global k =
+  match k.c_scope with
+  | Some _ -> false
+  | None -> true
+
+(** val yroute : clause list -> ehconf -> bool -> route -> chars **)
+
+let yroute _ e rc r =
   obj
     ((kv0 "route"
        (obj
@@ -23208,13 +23342,13 @@ let yroute e rc r =
 
 let yaml_program c e oC p =
   arr
-    (app (map yclause c)
+    (app (map yclause (filter yclause_global c))
       (app (match oC with
             | Some o -> (yoc o) :: []
             | None -> [])
         (match p with
          | [] -> []
          | r1 :: rs ->
-           (yroute e (match oC with
-                      | Some _ -> true
-                      | None -> false) r1) :: (map (yroute e false) rs))))
+           (yroute c e (match oC with
+                        | Some _ -> true
+                        | None -> false) r1) :: (map (yroute c e false) rs))))

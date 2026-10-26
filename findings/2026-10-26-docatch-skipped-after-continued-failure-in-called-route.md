@@ -80,3 +80,10 @@ The campaign case, combo-21-188:
 - Alternatively, CatchProcessor could treat EXCEPTION_HANDLED as "already caught" only when it holds `Boolean.TRUE`,
   which is what CatchProcessor.java:174 sets, and not an exception object.
 - A test: the reproducer above, expected `mock:catch` = 1.
+
+## Also without a called route (main session, runs/sc1-rand-real random-702-2781)
+The continue does not have to happen in a called route. A first `throwException(NumberFormatException)` in r0 that
+a global `onException(NumberFormatException).continued(true)` continues is enough. Later in the same route, a
+`doTry { to(direct:r1) }` whose call fails with IOException skips its matching `doCatch(IOException)`, and the
+IOException reaches the caller. The trigger is any earlier continued exception on the exchange (EXCEPTION_HANDLED
+stays set). The spec's Real-mode delta L3.doCatch.after-continued.real covers both.

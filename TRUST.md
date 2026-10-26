@@ -18,8 +18,10 @@ A differential result is only as good as these pieces, which no proof covers:
    text; the rules see the AST, Camel sees the text: `Simple.render` is part of the trust base).
 
 7. **L5 (component contract)**, from notes/l5.md: (1) oracle/l5/driver.ml (generator; printers of expected text); (2) harness/l5/L5Run.java: option read-back through the component's endpoint PropertyConfigurer, the endpoint field for path options, the endpoint URI's path when that field is unset and the syntax has one name (direct keeps it in `key`); a path option that cannot be read is not compared (controlbus command); the registry binds `myBean`, `otherBean`; class names are three JDK classes; (3) harness/l5/build-catalog.sh: camel-catalog, core-catalog and tooling-model compiled with javac, with only the component JSONs and components.properties as resources; (4) tools/gen_l5.py (JSON -> Rocq data).
-8. **onException clauses** are attached to every route as route-scoped copies (Camel's RouteBuilder-scoped clauses
-   are applied to each route the same way); redeliveryDelay is set to 0 (time is not modelled).
+8. **onException clauses**: since 2026-10-26 (L3.onException.scope) a global clause is a RouteBuilder-scoped
+   OnExceptionDefinition (setRouteScoped(false), merged by RoutesDefinition.prepareRoute as RoutesDefinition.onException
+   does), a route scoped one an output of its route; before, all were route-scoped copies on every route.
+   redeliveryDelay is set to 0 (time is not modelled).
 9. **Aggregators** get a SynchronousExecutorService (aggregate-eip.adoc 46-47), so the output runs in the caller's
    thread; JDK exception class table (L0/Exchange.v jdk_super) is a list of JDK facts, not Camel docs.
 10. **Sends run on a worker thread** (a blocking ProducerTemplate.send, as users call it) with a 10 s timeout, so a hang

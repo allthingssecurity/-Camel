@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""minimize.py <case-line-file> <grep-pattern>: shrink one route case (driver TSV line) while RouteRun's output still
+"""minimize.py <case-line-file> <grep-pattern> [--keep N]: shrink one route case (driver TSV line) while RouteRun's output still
 contains <grep-pattern> (e.g. 'INFLIGHT'). Greedy: delete one s-expression subtree (a step, a route, a send) at a time,
 keep the deletion if the pattern is still printed. Prints the minimal routes and sends. One JVM per try (niced)."""
 import os, subprocess, sys, tempfile
@@ -60,6 +60,9 @@ def run(routes, sends, pat):
 
 line = open(sys.argv[1]).read().strip().split('\t')
 pat = sys.argv[2]
+# --keep N: never delete inside the first N top-level forms (e.g. 3: the clauses, the error handler, the onCompletion),
+# so that a pattern that depends on them keeps its meaning
+KEEP = int(sys.argv[sys.argv.index('--keep') + 1]) if '--keep' in sys.argv else 0
 routes, sends = parse(line[1]), parse(line[2])
 assert run(routes, sends, pat), 'the pattern does not occur on the input'
 changed = True
@@ -73,6 +76,7 @@ while changed:
             # never delete a whole route, the clauses list, or a send: only steps (and clauses) inside them;
             # deleting a route makes a send to direct:<it> block (a false HANG)
             if len(p) < 2: continue
+            if p[0] < KEEP: continue
             # protect what makes generated loops end: the body of a while-loop and the rdyn route
             node, guarded = tree, False
             for i in p[:-1]:
