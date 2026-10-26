@@ -115,6 +115,12 @@ let pclauses cs = "(clauses" ^ String.concat "" (List.map (fun k -> " " ^ pclaus
 let peh = function
   | EHDefault -> []
   | EHDlc (q, n, uo) -> [ Printf.sprintf "(eh dlc %s %d %s)" (pc q) n (match uo with UONone -> "none" | UOMessage -> "msg" | UOBody -> "body") ]
+(* the onCompletion of the first route: (onCompletion always|complete|failure <when|(none)> after|before 0|1 <steps>) *)
+let poc = function
+  | None -> []
+  | Some o -> [ "(onCompletion " ^ (match o.oc_trig with OcAlways -> "always" | OcComplete -> "complete" | OcFailure -> "failure") ^ " "
+                ^ (match o.oc_when with None -> "(none)" | Some p -> ex p) ^ " " ^ (if o.oc_before then "before" else "after") ^ " "
+                ^ (if o.oc_orig then "1" else "0") ^ psteps o.oc_steps ^ ")" ]
 let proute (r : route) = "(route " ^ pc r.r_id ^ " " ^ pc r.r_from ^ psteps r.r_steps ^ ")"
 let psend (s : send) =
   "(send " ^ pc s.s_to ^ " " ^ (match s.s_mep with InOnly -> "InOnly" | InOut -> "InOut") ^ " " ^ canon s.s_body
@@ -276,6 +282,11 @@ let gen_block () =
       | 2 -> SSetHeader (chars (pick hkeys), gen_expr ())
       | _ -> STo (EMock (chars (pick [ "m1"; "m2" ]))))
 let gen_eh () = if Random.int 3 = 0 then EHDlc (chars "dead", Random.int 3, pick [ UONone; UOMessage; UOBody ]) else EHDefault
+let gen_oc () : oncomp option =
+  if Random.int 3 <> 0 then None
+  else Some { oc_trig = pick [ OcAlways; OcComplete; OcFailure ]; oc_when = (if Random.int 3 = 0 then Some (gen_pred ()) else None);
+              oc_before = Random.bool (); oc_orig = Random.int 4 = 0;
+              oc_steps = (match gen_block () with [] -> [ STo (EMock (chars "m1")) ] | b -> b) }
 let gen_clauses () : clause list =
   if Random.int 3 = 0 then []
   else
@@ -323,11 +334,12 @@ let () =
     let clauses, routes, sends = if fam = "combo" then Combo.gen_case () else gen_case () in
     let eh = if fam = "dlc" then EHDlc (chars "dead", Random.int 3, pick [ UONone; UOMessage; UOBody ]) else gen_eh () in
     let clauses = if fam = "dlc" && Random.bool () then [] else clauses in
-    let rs, g = run_case (Sys.getenv_opt "MODE" = Some "real") clauses eh 400 routes g0 sends in
+    let oc = if fam = "oc" || Random.int 2 = 0 then gen_oc () else None in
+    let rs, g = run_case (Sys.getenv_opt "MODE" = Some "real") clauses eh oc 400 routes g0 sends in
     count_hits rs;
     let expected = String.concat " " (List.map sres_text rs) ^ " G=" ^ kvs g.g_global in
-    Printf.printf "%s-%d-%d\t%s\t%s\t%s\t%s\t%s\t%s\n" fam seed i (String.concat " " (pclauses clauses :: peh eh @ List.map proute routes))
-      (String.concat " " (List.map psend sends)) expected fam (pc (xml_program clauses eh routes)) (pc (yaml_program clauses eh routes))
+    Printf.printf "%s-%d-%d\t%s\t%s\t%s\t%s\t%s\t%s\n" fam seed i (String.concat " " (pclauses clauses :: peh eh @ poc oc @ List.map proute routes))
+      (String.concat " " (List.map psend sends)) expected fam (pc (xml_program clauses eh oc routes)) (pc (yaml_program clauses eh oc routes))
   done
   ;
   if Array.length Sys.argv > 4 then begin

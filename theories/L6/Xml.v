@@ -156,8 +156,20 @@ Definition xeh (E : ehconf) : chars :=
                                             | UOBody => attr "useOriginalBody" (s "true") end)
         (empty "redeliveryPolicy" (attr "maximumRedeliveries" (ntxt n) ++ attr "redeliveryDelay" (s "0"))))
   end.
-Definition xroute (C : list clause) (E : ehconf) (r : route) : chars :=
+(*! R L6.xml.onCompletion DOC [OC.75-86] [OC.148-158] [M:onCompletion] *)
+(** A route scoped onCompletion element after [<from>] [OC.75-86]: onCompleteOnly / onFailureOnly / mode /
+    useOriginalMessage attributes, an [onWhen] element, the steps. *)
+Definition xoc (o : oncomp) : chars :=
+  elem "onCompletion" ((match oc_trig o with OcAlways => [] | OcComplete => attr "onCompleteOnly" (s "true")
+                                          | OcFailure => attr "onFailureOnly" (s "true") end) ++
+                       (if oc_before o then attr "mode" (s "BeforeConsumer") else []) ++
+                       (if oc_orig o then attr "useOriginalMessage" (s "true") else []))
+    ((match oc_when o with Some p => elem "onWhen" [] (xexpr p) | None => [] end) ++ xsteps (oc_steps o)).
+Definition xroute (C : list clause) (E : ehconf) (oc : option oncomp) (r : route) : chars :=
   elem "route" (attr "id" (r_id r))
-       (xeh E ++ empty "from" (attr "uri" (s "direct:" ++ r_from r)) ++ concat_with [] (map xclause C) ++ xsteps (r_steps r)).
-Definition xml_program (C : list clause) (E : ehconf) (P : list route) : chars :=
-  elem "routes" (attr "xmlns" (s "http://camel.apache.org/schema/xml-io")) (concat_with [] (map (xroute C E) P)).
+       (xeh E ++ empty "from" (attr "uri" (s "direct:" ++ r_from r)) ++
+        (match oc with Some o => xoc o | None => [] end) ++ concat_with [] (map xclause C) ++ xsteps (r_steps r)).
+(** The onCompletion is on the first route (L2 run_case: the route the sends go to). *)
+Definition xml_program (C : list clause) (E : ehconf) (OC : option oncomp) (P : list route) : chars :=
+  elem "routes" (attr "xmlns" (s "http://camel.apache.org/schema/xml-io"))
+    (concat_with [] (match P with [] => [] | r0 :: rs => xroute C E OC r0 :: map (xroute C E None) rs end)).

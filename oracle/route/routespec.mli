@@ -1139,6 +1139,14 @@ type ehconf =
 | EHDefault
 | EHDlc of chars * int * uomode
 
+type octrig =
+| OcAlways
+| OcComplete
+| OcFailure
+
+type oncomp = { oc_trig : octrig; oc_when : expr option; oc_before : 
+                bool; oc_orig : bool; oc_steps : step list }
+
 type event =
 | EvMock of chars * exchange * bool
 
@@ -1329,6 +1337,14 @@ val abort_result : bool -> exchange -> exchange -> exn -> exchange
 
 val find_route : route list -> chars -> route option
 
+val oc_failed : exchange -> bool
+
+val oc_trig_ok : octrig -> exchange -> bool
+
+val oc_fires : oncomp -> exchange -> pres0
+
+val oc_input : oncomp -> exchange -> exchange option
+
 type out =
 | ODone of gstate * exchange * event list * string list
 | OUns of string
@@ -1344,6 +1360,10 @@ val run0 :
   route list -> bool -> clause list -> ehconf -> int -> gstate -> exchange ->
   step list -> out
 
+val runoc :
+  route list -> bool -> clause list -> ehconf -> int -> oncomp option ->
+  gstate -> exchange -> out
+
 type send = { s_to : chars; s_mep : mep; s_body : val0;
               s_headers : (chars * val0) list }
 
@@ -1354,12 +1374,12 @@ type sres =
 val clause_unconfigured : clause -> bool
 
 val run_case_ :
-  bool -> clause list -> ehconf -> int -> route list -> gstate -> send list ->
-  sres list * gstate
+  bool -> clause list -> ehconf -> oncomp option -> int -> route list ->
+  gstate -> send list -> sres list * gstate
 
 val run_case :
-  bool -> clause list -> ehconf -> int -> route list -> gstate -> send list ->
-  sres list * gstate
+  bool -> clause list -> ehconf -> oncomp option -> int -> route list ->
+  gstate -> send list -> sres list * gstate
 
 val s : string -> chars
 
@@ -1391,9 +1411,12 @@ val xclause : clause -> chars
 
 val xeh : ehconf -> chars
 
-val xroute : clause list -> ehconf -> route -> chars
+val xoc : oncomp -> chars
 
-val xml_program : clause list -> ehconf -> route list -> chars
+val xroute : clause list -> ehconf -> oncomp option -> route -> chars
+
+val xml_program :
+  clause list -> ehconf -> oncomp option -> route list -> chars
 
 val s0 : string -> chars
 
@@ -1439,6 +1462,9 @@ val yclause : clause -> chars
 
 val yeh : ehconf -> chars list
 
-val yroute : ehconf -> route -> chars
+val yoc : oncomp -> chars
 
-val yaml_program : clause list -> ehconf -> route list -> chars
+val yroute : ehconf -> bool -> route -> chars
+
+val yaml_program :
+  clause list -> ehconf -> oncomp option -> route list -> chars

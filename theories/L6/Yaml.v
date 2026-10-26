@@ -154,8 +154,21 @@ Definition yeh (E : ehconf) : list chars :=
          match uo with UONone => [] | UOMessage => [kv "useOriginalMessage" (s "true")] | UOBody => [kv "useOriginalBody" (s "true")] end ++
          [kv "redeliveryPolicy" (obj [kv "maximumRedeliveries" (ntxt n); kv "redeliveryDelay" (jstr (s "0"))])]))])]
   end.
-Definition yroute (E : ehconf) (r : route) : chars :=
+(*! R L6.yaml.onCompletion DOC [OC.91] [OC.95-112] [M:onCompletion] *)
+(** "In YAML a route scoped onCompletion is declared in a routeConfiguration that the route refers to" [OC.91]. *)
+Definition yoc (o : oncomp) : chars :=
+  obj [kv "routeConfiguration" (obj [kv "id" (jstr (s "ocConfig"));
+    kv "onCompletion" (arr [obj [kv "onCompletion" (obj (
+      (match oc_trig o with OcAlways => [] | OcComplete => [kv "onCompleteOnly" (jstr (s "true"))]
+                         | OcFailure => [kv "onFailureOnly" (jstr (s "true"))] end) ++
+      (if oc_before o then [kv "mode" (jstr (s "BeforeConsumer"))] else []) ++
+      (if oc_orig o then [kv "useOriginalMessage" (jstr (s "true"))] else []) ++
+      (match oc_when o with Some p => [kv "onWhen" (obj [exprf p])] | None => [] end) ++
+      [kv "steps" (ysteps (oc_steps o))]))]])])].
+Definition yroute (E : ehconf) (rc : bool) (r : route) : chars :=
   obj [kv "route" (obj ([kv "id" (jstr (r_id r))] ++ yeh E ++
+                        (if rc then [kv "routeConfigurationId" (jstr (s "ocConfig"))] else []) ++
                         [kv "from" (obj [kv "uri" (jstr (s "direct:" ++ r_from r)); kv "steps" (ysteps (r_steps r))])]))].
-Definition yaml_program (C : list clause) (E : ehconf) (P : list route) : chars :=
-  arr (map yclause C ++ map (yroute E) P).
+Definition yaml_program (C : list clause) (E : ehconf) (OC : option oncomp) (P : list route) : chars :=
+  arr (map yclause C ++ (match OC with Some o => [yoc o] | None => [] end) ++
+       match P with [] => [] | r0 :: rs => yroute E (match OC with Some _ => true | None => false end) r0 :: map (yroute E false) rs end).

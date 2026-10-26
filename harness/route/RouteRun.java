@@ -354,10 +354,12 @@ public class RouteRun {
             return runSends(ctx, sends, events, globals);
         }
         List<RouteDefinition> defs = new ArrayList<>();
-        Sx clauses = null, eh = null;
+        Sx clauses = null, eh = null, oc = null;
+        boolean first = true;
         for (Sx r : parseAll(routes)) {
             if (r.head().equals("clauses")) { clauses = r; continue; }
             if (r.head().equals("eh")) { eh = r; continue; }
+            if (r.head().equals("onCompletion")) { oc = r; continue; }
             RouteDefinition d = new RouteDefinition("direct:" + r.a(2));
             d.routeId(r.a(1));
             // the program's error handler (L3.dlc): (eh dlc <mock> <maximumRedeliveries> none|msg|body), redeliveryDelay 0
@@ -368,6 +370,19 @@ public class RouteRun {
                 if (eh.a(4).equals("body")) dlc.useOriginalBody();
                 d.errorHandler(dlc);
             }
+            // the program's onCompletion: route scoped, on the first route (the one the sends go to) (L3.onCompletion)
+            if (first && oc != null) {
+                OnCompletionDefinition o = new OnCompletionDefinition();
+                if (oc.a(1).equals("complete")) o.setOnCompleteOnly("true");
+                if (oc.a(1).equals("failure")) o.setOnFailureOnly("true");
+                Sx w = oc.kids.get(2);
+                if (!w.head().equals("none")) o.setOnWhen(new OnWhenDefinition(expr(w)));
+                if (oc.a(3).equals("before")) o.setMode("BeforeConsumer");
+                if (oc.a(4).equals("1")) o.setUseOriginalMessage("true");
+                steps(o, oc, 5);
+                d.addOutput(o);
+            }
+            first = false;
             // the program's onException clauses, as route-scoped copies on every route (TRUST.md)
             if (clauses != null) for (int i = 1; i < clauses.kids.size(); i++) d.addOutput(onException(clauses.kids.get(i)));
             steps(d, r, 3);

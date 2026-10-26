@@ -22,6 +22,7 @@
       [EC]  docs/user-manual/modules/ROOT/pages/exception-clause.adoc (L3)
       [EHP] .../pages/exception-handling-patterns.adoc  [ER] .../pages/exception-redelivery.adoc
       [DEH] .../pages/defaulterrorhandler.adoc          [DLC] .../eips/pages/dead-letter-channel.adoc
+      [OC]  docs/user-manual/modules/ROOT/pages/oncompletion.adoc
       [SPL] .../eips/pages/split-eip.adoc          [MCE] .../eips/pages/multicast-eip.adoc
       [RLE] .../eips/pages/recipientList-eip.adoc
       [AS]  core/camel-core-model/src/main/java/org/apache/camel/builder/AggregationStrategies.java (javadoc)
@@ -183,6 +184,13 @@ Record clause : Type := mkClause {
     within a single RouteBuilder" [EH.44-47]: one for all the routes of a program. *)
 Inductive uomode : Type := UONone | UOMessage | UOBody.
 Inductive ehconf : Type := EHDefault | EHDlc (dlq : chars) (n : nat) (uo : uomode).
+
+(** A route scoped onCompletion [OC.35-49, M:onCompletion]: when it triggers (always, onCompleteOnly, onFailureOnly
+    [OC.115-119]), an optional onWhen [OC.254-258], the mode (BeforeConsumer or the default AfterConsumer
+    [OC.407-421]), useOriginalMessage [M:onCompletion.useOriginalMessage] and its steps. One per program, on the route
+    the sends go to (the first route); parallelProcessing is not modelled (default false [OC.25]). *)
+Inductive octrig : Type := OcAlways | OcComplete | OcFailure.
+Record oncomp : Type := mkOc { oc_trig : octrig; oc_when : option expr; oc_before : bool; oc_orig : bool; oc_steps : list step }.
 
 (** What the harness observes: an exchange received by a mock endpoint (mock keeps a copy of what it received:
     copyOnExchange defaults to true [MJS: copyOnExchange], [MC.487]). [exn_unknown]: whether the exchange shows the
@@ -900,9 +908,12 @@ with bs1 : gstate -> exchange -> step -> gstate -> exchange -> list event -> Pro
     x_eh x = true -> select_clause (set_exn x (Some (mkExn c m None))) (mkExn c m None) = Ok0 None ->
     EHc = EHDlc q n uo -> dlc_out uo x = Some x' ->
     bs1 g x (SThrow c m) g x' [EvMock q x' false]
+(*! R L3.dlc.clause-redelivery.real CODE findings/2026-10-26-dlc-useoriginal-lost-with-onexception-redelivery.md *)
+(** Real-mode delta: then Camel moves the current message (useOriginalMessage/Body of the dead letter channel is
+    replaced by the clause's, unset). *)
 | BThrowDLCClause : forall g x c m k q n uo x',
     x_eh x = true -> select_clause (set_exn x (Some (mkExn c m None))) (mkExn c m None) = Ok0 (Some k) ->
-    dlc_takes k = true -> c_handled k = None -> EHc = EHDlc q n uo -> dlc_out uo x = Some x' ->
+    dlc_takes k = true -> c_handled k = None -> EHc = EHDlc q n uo -> dlc_out (if real then UONone else uo) x = Some x' ->
     bs1 g x (SThrow c m) g x' [EvMock q x' false]
 (*! R L3.onException DOC [EC.3-9] [EHP.60-74] [ER.18-19] [DEH.20-25] *)
 | BThrowEH : forall g x c m k g' y t x',
@@ -1151,6 +1162,46 @@ with bch : gstate -> exchange -> list (expr * list step) -> option (list step) -
 (** No branch ran: "the body as it was when no branch ran" [M:choice.25]. *)
 | BCNone : forall g x, bch g x [] None g x [].
 
+(** ** onCompletion (L3): what happens when a send's exchange is complete *)
+(*! R L3.onCompletion DOC [OC.35-43] [OC.115-119] [OC.187-189] [M:onCompletion.onCompleteOnly] [M:onCompletion.onFailureOnly] *)
+(** "when the original Exchange is complete. Camel spins off a copy of the Exchange and routes it ... similar to a
+    Wire Tap ... we did not want the onCompletion route to interfere with the original route" [OC.37-43]: the
+    caller's exchange is unchanged; the steps' events come after the route's. It triggers always, or only when the
+    exchange "completed successfully (no errors)" / "ended with failure (exception ...)" [M:onCompletion]; onWhen
+    "to only trigger if matching predicate" [OC.22]. With useOriginalMessage the copy has the original message.
+    What the steps see of the exception, and an exception or a stop in the steps, are not documented: the copy has
+    no exception and no error handler (an exception in the steps: no rule). *)
+(*! R L3.onCompletion.trigger CODE harness/probes/OnCompletionProbe.java *)
+(** Not documented: whether a handled exception or a stop is a success. Camel: both trigger onCompleteOnly, neither
+    onFailureOnly (as "no errors" reads: the exchange has no exception). *)
+(*! R L3.onCompletion.before DOC [OC.418-421] *)
+(** BeforeConsumer "allows the onCompletion to modify the Exchange, such as adding special headers" [OC.418-421]:
+    the caller gets the message the steps leave (probe: body and headers; exception kept). Changes of properties or
+    variables: not documented (no rule). *)
+Definition oc_failed (x : exchange) : bool := match x_exn x with Some _ => true | None => false end.
+Definition oc_trig_ok (k : octrig) (x : exchange) : bool :=
+  match k with OcAlways => true | OcComplete => negb (oc_failed x) | OcFailure => oc_failed x end.
+Definition oc_fires (o : oncomp) (x : exchange) : pres :=
+  if oc_trig_ok (oc_trig o) x then match oc_when o with None => PB true | Some p => eval_pred x p end else PB false.
+Definition oc_input (o : oncomp) (x : exchange) : option exchange :=
+  option_map (fun m => set_eh (set_seen (set_done (set_stop (set_exn (with_msg x m) None) false) false) false) false)
+             (if oc_orig o then x_orig x else Some (x_msg x)).
+Inductive boc : option oncomp -> gstate -> exchange -> gstate -> exchange -> list event -> Prop :=
+| BOcNone : forall g x, boc None g x g x []
+| BOcSkip : forall o g x, oc_fires o x = PB false -> boc (Some o) g x g x []
+(*! R L3.onCompletion.alias.real CODE findings/2026-10-26-oncompletion-copy-aliases-original-message.md *)
+| BOcAfter : forall o g x y0 g' y t, oc_fires o x = PB true -> oc_before o = false ->
+    (real && oc_orig o && x_done x && match EHc with EHDlc _ _ UOMessage => true | _ => false end) = false ->
+    oc_input o x = Some y0 ->
+    bss g y0 (oc_steps o) g' y t -> x_exn y = None -> x_stop y = false -> x_done y = false ->
+    boc (Some o) g x g' x t
+(*! R L3.onCompletion.before-original.real CODE findings/2026-10-26-oncompletion-beforeconsumer-useoriginal-inout.md *)
+| BOcBefore : forall o g x y0 g' y t, oc_fires o x = PB true -> oc_before o = true ->
+    (real && oc_orig o && match x_mep x with InOut => true | _ => false end) = false -> oc_input o x = Some y0 ->
+    bss g y0 (oc_steps o) g' y t -> x_exn y = None -> x_stop y = false -> x_done y = false ->
+    (kveqb (x_vars y) (x_vars y0) && kvset_eqb (x_props y) (x_props y0)) = true ->
+    boc (Some o) g x g' (with_msg x (x_msg y)) t.
+
 (** ** The interpreter *)
 
 (** [ODone] also carries the ids of the rules used ([h]); they are coverage counters for the differential runs
@@ -1248,7 +1299,7 @@ with run1 (fuel : nat) (g : gstate) (x : exchange) (s : step) {struct fuel} : ou
                 if dlc_takes k then
                   match c_handled k, EHc with
                   | None, EHDlc q _ uo =>
-                      match dlc_out uo x with
+                      match dlc_out (if real then UONone else uo) x with
                       | Some x' => ODone g x' [EvMock q x' false] ["L2.throwException"; "L3.onException.select"; "L3.dlc.clause-redelivery"; "L3.dlc"; "L3.dlc.result"]
                       | None => OUns "DLC: the original message of an aggregator's output is not documented"
                       end
@@ -1628,7 +1679,7 @@ Proof.
         -- destruct (dlc_takes k) eqn:Dt.
            { destruct (c_handled k) as [hb|] eqn:Hk; [discriminate|].
              destruct EHc as [|q n uo] eqn:He; [discriminate|].
-             destruct (dlc_out uo x) as [xo|] eqn:Ho; [|discriminate].
+             destruct (dlc_out (if real then UONone else uo) x) as [xo|] eqn:Ho; [|discriminate].
              inversion H; subst. eapply BThrowDLCClause; eauto. }
            apply seqo_done in H as [g1 [y [t1 [h1 [H1 H2]]]]].
            destruct (x_stop y) eqn:Hs; [discriminate|].
@@ -1796,6 +1847,51 @@ Proof.
       * eapply BCWhenF; eauto.
 Qed.
 
+Definition runoc (fuel : nat) (oc : option oncomp) (g : gstate) (x : exchange) : out :=
+  match oc with
+  | None => ODone g x [] []
+  | Some o =>
+      match oc_fires o x with
+      | PUns w => OUns w
+      | PB false => ODone g x [] ["L3.onCompletion"; "L3.onCompletion.trigger"]
+      | PB true =>
+          match oc_input o x with
+          | None => OUns "OC: the original message of an aggregator's output is not documented"
+          | Some y0 =>
+              if oc_before o && real && oc_orig o && match x_mep x with InOut => true | _ => false end
+              then OUns "REAL: BeforeConsumer + useOriginalMessage on an InOut exchange sees the current message (finding)" else
+              if negb (oc_before o) && real && oc_orig o && x_done x && match EHc with EHDlc _ _ UOMessage => true | _ => false end
+              then OUns "REAL: the onCompletion copy shares the original message the dead letter channel put on the exchange (finding)" else
+              seqo (run fuel g y0 (oc_steps o)) (fun g' y t h =>
+                match x_exn y with
+                | Some _ => OUns "OC: an exception in the onCompletion steps (it does not interfere with the caller [OC.42-43]; not modelled)"
+                | None => if x_stop y || x_done y then OUns "OC: a stop in the onCompletion steps not documented"
+                          else if oc_before o then
+                            if kveqb (x_vars y) (x_vars y0) && kvset_eqb (x_props y) (x_props y0)
+                            then ODone g' (with_msg x (x_msg y)) t ("L3.onCompletion" :: "L3.onCompletion.trigger" :: "L3.onCompletion.before" :: h)
+                            else OUns "OC: BeforeConsumer steps that change properties or variables: not documented"
+                          else ODone g' x t ("L3.onCompletion" :: "L3.onCompletion.trigger" :: h)
+                end)
+          end
+      end
+  end.
+Lemma runoc_sound : forall fuel oc g x g' x' t h, runoc fuel oc g x = ODone g' x' t h -> boc oc g x g' x' t.
+Proof.
+  intros fuel oc g x g' x' t h H. destruct oc as [o|]; simpl in H; [|inversion H; subst; constructor].
+  destruct (oc_fires o x) as [[|]|w] eqn:F; [|inversion H; subst; now apply BOcSkip|discriminate].
+  destruct (oc_input o x) as [y0|] eqn:I; [|discriminate].
+  destruct (oc_before o && real && oc_orig o && match x_mep x with InOut => true | _ => false end) eqn:Rb; [discriminate|].
+  destruct (negb (oc_before o) && real && oc_orig o && x_done x && match EHc with EHDlc _ _ UOMessage => true | _ => false end) eqn:Ra; [discriminate|].
+  apply seqo_done in H as [g1 [y [t1 [h1 [H1 H2]]]]].
+  apply (proj1 (run_sound fuel)) in H1.
+  destruct (x_exn y) eqn:Ex; [discriminate|].
+  destruct (x_stop y) eqn:Hs; [discriminate|]. destruct (x_done y) eqn:Hd; [discriminate|].
+  destruct (oc_before o) eqn:B.
+  - destruct (kveqb (x_vars y) (x_vars y0) && kvset_eqb (x_props y) (x_props y0)) eqn:K; [|discriminate].
+    simpl in Rb. inversion H2; subst. eapply BOcBefore; eauto.
+  - simpl in Ra. inversion H2; subst. eapply BOcAfter; eauto.
+Qed.
+
 End Rules.
 
 (** ** Running a case: several sends, one after another, sharing the context-wide state (global, route and group
@@ -1812,7 +1908,7 @@ Inductive sres : Type :=
 Definition clause_unconfigured (k : clause) : bool :=
   match c_steps k, c_handled k, c_continued k, c_redeliveries k with [], None, false, O => true | _, _, _, _ => false end.
 
-Fixpoint run_case_ (real : bool) (C : list clause) (E : ehconf) (fuel : nat) (P : list route) (g : gstate) (ss : list send) : list sres * gstate :=
+Fixpoint run_case_ (real : bool) (C : list clause) (E : ehconf) (OC : option oncomp) (fuel : nat) (P : list route) (g : gstate) (ss : list send) : list sres * gstate :=
   match ss with
   | [] => ([], g)
   | s :: ss' =>
@@ -1820,16 +1916,25 @@ Fixpoint run_case_ (real : bool) (C : list clause) (E : ehconf) (fuel : nat) (P 
       | None => ([SUns "DC: send to direct: without a consumer"], g)
       | Some r =>
           match run P real C E fuel g (new_exchange (s_mep s) (s_body s) (s_headers s)) (r_steps r) with
-          | ODone g' x t h => let '(rs, g'') := run_case_ real C E fuel P (complete_uow real g' x) ss' in (SDone t x h :: rs, g'')
+          | ODone g' x t h =>
+              (* the onCompletion is on the first route (the one the sends go to): route scope *)
+              let oc := match P with r0 :: _ => if ceqs (r_from r0) (s_to s) then OC else None | [] => None end in
+              match runoc P real C E fuel oc g' x with
+              | ODone g2 x2 t2 h2 =>
+                  let '(rs, g'') := run_case_ real C E OC fuel P (complete_uow real g2 x2) ss' in (SDone (t ++ t2) x2 (h ++ h2) :: rs, g'')
+              | OUns w => ([SUns w], g)
+              end
           | OUns w => ([SUns w], g)   (* later sends depend on the state: stop at the first UNSPECIFIED one *)
           end
       end
   end.
-Definition run_case (real : bool) (C : list clause) (E : ehconf) (fuel : nat) (P : list route) (g : gstate) (ss : list send)
+Definition run_case (real : bool) (C : list clause) (E : ehconf) (OC : option oncomp) (fuel : nat) (P : list route) (g : gstate) (ss : list send)
   : list sres * gstate :=
   if existsb clause_unconfigured C
   then ([SUns "EC: onException without steps or options (refused at route creation; not documented)"], g)
-  else run_case_ real C E fuel P g ss.
+  else if match OC with Some o => match oc_steps o with [] => true | _ => false end | None => false end
+  then ([SUns "OC: onCompletion without steps (refused at route creation: no children; not documented)"], g)
+  else run_case_ real C E OC fuel P g ss.
 
 (** ** Examples from the docs *)
 
@@ -1987,7 +2092,7 @@ Definition agg3 : list route :=
 Definition snd1 (b : string) : send := mkSend (str "r0") InOnly (VStr (str b)) [(str "id", VStr (str "1"))].
 Example doc_aggregate_size_3 :
   map (fun r => match r with SDone t _ _ => map (fun '(EvMock n y _) => (n, m_body (x_msg y))) t | SUns _ => [] end)
-      (fst (run_case false [] EHDefault 50 agg3 g0 [snd1 "A"; snd1 "B"; snd1 "C"]))
+      (fst (run_case false [] EHDefault None 50 agg3 g0 [snd1 "A"; snd1 "B"; snd1 "C"]))
   = [[(str "after", VStr (str "A"))];
      [(str "after", VStr (str "B"))];
      [(str "out", VList [str "A"; str "B"; str "C"]); (str "after", VStr (str "C"))]].
@@ -2013,13 +2118,13 @@ Definition idem_route : list route :=
 Definition mocks_of (rs : list sres) : list (list chars) :=
   map (fun r => match r with SDone t _ _ => map (fun '(EvMock n _ _) => n) t | SUns _ => [] end) rs.
 Example doc_idempotent_duplicate :
-  mocks_of (fst (run_case false [] EHDefault 50 idem_route g0 [snd1 "A"; snd1 "B"]))
+  mocks_of (fst (run_case false [] EHDefault None 50 idem_route g0 [snd1 "A"; snd1 "B"]))
   = [[str "result"; str "after"]; [str "after"]].
 Proof. vm_compute. reflexivity. Qed.
 Definition rr_route : list route :=
   [mkRoute (str "r0") (str "r0") [SLB (str "lb1") LBRoundRobin [STo (EMock (str "a")); STo (EMock (str "b"))]]].
 Example doc_round_robin :
-  mocks_of (fst (run_case false [] EHDefault 50 rr_route g0 [snd1 "A"; snd1 "B"; snd1 "C"])) = [[str "a"]; [str "b"]; [str "a"]].
+  mocks_of (fst (run_case false [] EHDefault None 50 rr_route g0 [snd1 "A"; snd1 "B"; snd1 "C"])) = [[str "a"]; [str "b"]; [str "a"]].
 Proof. vm_compute. reflexivity. Qed.
 Example doc_failover :
   let o := run [] false [] EHDefault 30 g0 (new_exchange InOnly VNull [])

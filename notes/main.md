@@ -34,6 +34,12 @@
 - L5 agent: l5-catalog-missing-path-reported-invalid, l5-ignore-case-global-options-dropped,
   l5-seda-offertimeout-duration, l5-seda-size-max-value-ignored, l5-timer-pattern-not-kept, and one more (see the private note)
 - 2026-10-26-hang-routingslip-dotry-redelivery-lost-callback.md (a blocking send never returns; also in 4.22.1, 4.23.0)
+- 2026-10-26-dlc-useoriginal-lost-with-onexception-redelivery.md (DLC useOriginalMessage/Body lost when an
+  onException overrides the redelivery; also 4.22.1, 4.23.0; Real delta L3.dlc.clause-redelivery.real)
+- 2026-10-26-oncompletion-beforeconsumer-useoriginal-inout.md (BeforeConsumer + useOriginalMessage ignores the original
+  for InOut; Real delta L3.onCompletion.before-original.real)
+- 2026-10-26-oncompletion-copy-aliases-original-message.md (onCompletion copy shares the original Message the DLC
+  put on the exchange: the caller's exchange is changed; Real delta L3.onCompletion.alias.real)
 - 2026-10-26-dofinally-only-first-step-after-handled-direct.md (doFinally after a direct: call handled by the called
   route's error handler runs only its first step; also 4.22.1, 4.23.0; Real delta L3.doFinally.after-complete.real)
 
@@ -81,3 +87,12 @@ so far are the aggregator's deferred output (timing), not leaks. A background hu
   after a handled direct: call; the steps after the doTry do not), FinallyFirstStepProbe (the finding).
 - Runs (oracle with L3.dlc*): dlc5-real 5000 / 0, dlc5-doc 5000 / 103, dlc5-rand-real 5000 / 0, dlc5-xml-real 3000 / 0,
   dlc5-yaml-real 3000 / 0. Family `dlc`: always a dead letter channel, no clauses half of the time.
+
+## L3 onCompletion (2026-10-26)
+- Route scoped, one per program, on the first route (boc / runoc after the send's run; runoc_sound,
+  oncompletion_deterministic). Probes: OnCompletionProbe (copy; BeforeConsumer visible to the caller; handled / stop
+  are success; once per exchange, not per split item, once across direct:; exception in the steps does not reach the
+  caller; two onCompletions run in reverse order: not modelled, one only), OcOriginalProbe*, OcBeforeOriginalProbe.
+- Not modelled: global (context) scope, parallelProcessing, several onCompletions, onCompletion in called routes.
+- Minimizing with a marker: put `(toMock dead)` as the only onCompletion step and minimize on "dead=..."; keep the
+  clauses / eh / onCompletion forms (scratchpad minimize_keep3.py: skip p[0] in (0,1,2)).

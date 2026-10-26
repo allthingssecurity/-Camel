@@ -18755,6 +18755,14 @@ type ehconf =
 | EHDefault
 | EHDlc of chars * int * uomode
 
+type octrig =
+| OcAlways
+| OcComplete
+| OcFailure
+
+type oncomp = { oc_trig : octrig; oc_when : expr option; oc_before : 
+                bool; oc_orig : bool; oc_steps : step list }
+
 type event =
 | EvMock of chars * exchange * bool
 
@@ -21384,6 +21392,40 @@ let abort_result real x y e =
 let find_route p n0 =
   find (fun r -> ceqs r.r_from n0) p
 
+(** val oc_failed : exchange -> bool **)
+
+let oc_failed x =
+  match x.x_exn with
+  | Some _ -> true
+  | None -> false
+
+(** val oc_trig_ok : octrig -> exchange -> bool **)
+
+let oc_trig_ok k x =
+  match k with
+  | OcAlways -> true
+  | OcComplete -> negb (oc_failed x)
+  | OcFailure -> oc_failed x
+
+(** val oc_fires : oncomp -> exchange -> pres0 **)
+
+let oc_fires o x =
+  if oc_trig_ok o.oc_trig x
+  then (match o.oc_when with
+        | Some p -> eval_pred x p
+        | None -> PB true)
+  else PB false
+
+(** val oc_input : oncomp -> exchange -> exchange option **)
+
+let oc_input o x =
+  option_map (fun m ->
+    set_eh
+      (set_seen
+        (set_done (set_stop (set_exn (with_msg x m) None) false) false) false)
+      false)
+    (if o.oc_orig then x.x_orig else Some x.x_msg)
+
 type out =
 | ODone of gstate * exchange * event list * string list
 | OUns of string
@@ -21530,7 +21572,7 @@ let run0 p real c eHc =
                            (match eHc with
                             | EHDefault -> OUns "impossible"
                             | EHDlc (q, _, uo) ->
-                              (match dlc_out uo x with
+                              (match dlc_out (if real then UONone else uo) x with
                                | Some x' ->
                                  ODone (g, x', ((EvMock (q, x',
                                    false)) :: []),
@@ -22042,6 +22084,63 @@ let run0 p real c eHc =
       fuel
   in run1
 
+(** val runoc :
+    route list -> bool -> clause list -> ehconf -> int -> oncomp option ->
+    gstate -> exchange -> out **)
+
+let runoc p real c eHc fuel oc g x =
+  match oc with
+  | Some o ->
+    (match oc_fires o x with
+     | PB b ->
+       if b
+       then (match oc_input o x with
+             | Some y0 ->
+               if (&&) ((&&) ((&&) o.oc_before real) o.oc_orig)
+                    (match x.x_mep with
+                     | InOnly -> false
+                     | InOut -> true)
+               then OUns
+                      "REAL: BeforeConsumer + useOriginalMessage on an InOut exchange sees the current message (finding)"
+               else if (&&)
+                         ((&&) ((&&) ((&&) (negb o.oc_before) real) o.oc_orig)
+                           x.x_done)
+                         (match eHc with
+                          | EHDefault -> false
+                          | EHDlc (_, _, uo) ->
+                            (match uo with
+                             | UOMessage -> true
+                             | _ -> false))
+                    then OUns
+                           "REAL: the onCompletion copy shares the original message the dead letter channel put on the exchange (finding)"
+                    else seqo (run0 p real c eHc fuel g y0 o.oc_steps)
+                           (fun g' y t h ->
+                           match y.x_exn with
+                           | Some _ ->
+                             OUns
+                               "OC: an exception in the onCompletion steps (it does not interfere with the caller [OC.42-43]; not modelled)"
+                           | None ->
+                             if (||) y.x_stop y.x_done
+                             then OUns
+                                    "OC: a stop in the onCompletion steps not documented"
+                             else if o.oc_before
+                                  then if (&&) (kveqb y.x_vars y0.x_vars)
+                                            (kvset_eqb y.x_props y0.x_props)
+                                       then ODone (g', (with_msg x y.x_msg),
+                                              t,
+                                              ("L3.onCompletion" :: ("L3.onCompletion.trigger" :: ("L3.onCompletion.before" :: h))))
+                                       else OUns
+                                              "OC: BeforeConsumer steps that change properties or variables: not documented"
+                                  else ODone (g', x, t,
+                                         ("L3.onCompletion" :: ("L3.onCompletion.trigger" :: h))))
+             | None ->
+               OUns
+                 "OC: the original message of an aggregator's output is not documented")
+       else ODone (g, x, [],
+              ("L3.onCompletion" :: ("L3.onCompletion.trigger" :: [])))
+     | PUns0 w -> OUns w)
+  | None -> ODone (g, x, [], [])
+
 type send = { s_to : chars; s_mep : mep; s_body : val0;
               s_headers : (chars * val0) list }
 
@@ -22066,10 +22165,10 @@ let clause_unconfigured k =
   | _ :: _ -> false
 
 (** val run_case_ :
-    bool -> clause list -> ehconf -> int -> route list -> gstate -> send list
-    -> sres list * gstate **)
+    bool -> clause list -> ehconf -> oncomp option -> int -> route list ->
+    gstate -> send list -> sres list * gstate **)
 
-let rec run_case_ real c e fuel p g = function
+let rec run_case_ real c e oC fuel p g = function
 | [] -> ([], g)
 | s1 :: ss' ->
   (match find_route p s1.s_to with
@@ -22077,22 +22176,39 @@ let rec run_case_ real c e fuel p g = function
      (match run0 p real c e fuel g
               (new_exchange s1.s_mep s1.s_body s1.s_headers) r.r_steps with
       | ODone (g', x, t, h) ->
-        let (rs, g'') = run_case_ real c e fuel p (complete_uow real g' x) ss'
+        let oc =
+          match p with
+          | [] -> None
+          | r1 :: _ -> if ceqs r1.r_from s1.s_to then oC else None
         in
-        (((SDone (t, x, h)) :: rs), g'')
+        (match runoc p real c e fuel oc g' x with
+         | ODone (g2, x2, t2, h2) ->
+           let (rs, g'') =
+             run_case_ real c e oC fuel p (complete_uow real g2 x2) ss'
+           in
+           (((SDone ((app t t2), x2, (app h h2))) :: rs), g'')
+         | OUns w -> (((SUns w) :: []), g))
       | OUns w -> (((SUns w) :: []), g))
    | None -> (((SUns "DC: send to direct: without a consumer") :: []), g))
 
 (** val run_case :
-    bool -> clause list -> ehconf -> int -> route list -> gstate -> send list
-    -> sres list * gstate **)
+    bool -> clause list -> ehconf -> oncomp option -> int -> route list ->
+    gstate -> send list -> sres list * gstate **)
 
-let run_case real c e fuel p g ss =
+let run_case real c e oC fuel p g ss =
   if existsb clause_unconfigured c
   then (((SUns
          "EC: onException without steps or options (refused at route creation; not documented)") :: []),
          g)
-  else run_case_ real c e fuel p g ss
+  else (match oC with
+        | Some o ->
+          (match o.oc_steps with
+           | [] ->
+             (((SUns
+               "OC: onCompletion without steps (refused at route creation: no children; not documented)") :: []),
+               g)
+           | _ :: _ -> run_case_ real c e oC fuel p g ss)
+        | None -> run_case_ real c e oC fuel p g ss)
 
 (** val s : string -> chars **)
 
@@ -22392,19 +22508,43 @@ let xeh = function
         (app (attr "maximumRedeliveries" (ntxt n0))
           (attr "redeliveryDelay" (s "0")))))
 
-(** val xroute : clause list -> ehconf -> route -> chars **)
+(** val xoc : oncomp -> chars **)
 
-let xroute c e r =
+let xoc o =
+  elem "onCompletion"
+    (app
+      (match o.oc_trig with
+       | OcAlways -> []
+       | OcComplete -> attr "onCompleteOnly" (s "true")
+       | OcFailure -> attr "onFailureOnly" (s "true"))
+      (app (if o.oc_before then attr "mode" (s "BeforeConsumer") else [])
+        (if o.oc_orig then attr "useOriginalMessage" (s "true") else [])))
+    (app
+      (match o.oc_when with
+       | Some p -> elem "onWhen" [] (xexpr p)
+       | None -> [])
+      (xsteps o.oc_steps))
+
+(** val xroute : clause list -> ehconf -> oncomp option -> route -> chars **)
+
+let xroute c e oc r =
   elem "route" (attr "id" r.r_id)
     (app (xeh e)
       (app (empty "from" (attr "uri" (app (s "direct:") r.r_from)))
-        (app (concat_with [] (map xclause c)) (xsteps r.r_steps))))
+        (app (match oc with
+              | Some o -> xoc o
+              | None -> [])
+          (app (concat_with [] (map xclause c)) (xsteps r.r_steps)))))
 
-(** val xml_program : clause list -> ehconf -> route list -> chars **)
+(** val xml_program :
+    clause list -> ehconf -> oncomp option -> route list -> chars **)
 
-let xml_program c e p =
+let xml_program c e oC p =
   elem "routes" (attr "xmlns" (s "http://camel.apache.org/schema/xml-io"))
-    (concat_with [] (map (xroute c e) p))
+    (concat_with []
+      (match p with
+       | [] -> []
+       | r1 :: rs -> (xroute c e oC r1) :: (map (xroute c e None) rs)))
 
 (** val s0 : string -> chars **)
 
@@ -22866,20 +23006,95 @@ let yeh = function
                                                                   (jstr
                                                                     (s0 "0"))) :: [])))) :: []))))) :: []))) :: []
 
-(** val yroute : ehconf -> route -> chars **)
+(** val yoc : oncomp -> chars **)
 
-let yroute e r =
+let yoc o =
+  obj
+    ((kv0 "routeConfiguration"
+       (obj
+         ((kv0 "id" (jstr (s0 "ocConfig"))) :: ((kv0 "onCompletion"
+                                                  (arr
+                                                    ((obj
+                                                       ((kv0 "onCompletion"
+                                                          (obj
+                                                            (app
+                                                              (match o.oc_trig with
+                                                               | OcAlways ->
+                                                                 []
+                                                               | OcComplete ->
+                                                                 (kv0
+                                                                   "onCompleteOnly"
+                                                                   (jstr
+                                                                    (s0
+                                                                    "true"))) :: []
+                                                               | OcFailure ->
+                                                                 (kv0
+                                                                   "onFailureOnly"
+                                                                   (jstr
+                                                                    (s0
+                                                                    "true"))) :: [])
+                                                              (app
+                                                                (if o.oc_before
+                                                                 then 
+                                                                   (kv0 "mode"
+                                                                    (jstr
+                                                                    (s0
+                                                                    "BeforeConsumer"))) :: []
+                                                                 else [])
+                                                                (app
+                                                                  (if o.oc_orig
+                                                                   then 
+                                                                    (kv0
+                                                                    "useOriginalMessage"
+                                                                    (jstr
+                                                                    (s0
+                                                                    "true"))) :: []
+                                                                   else [])
+                                                                  (app
+                                                                    (
+                                                                    match o.oc_when with
+                                                                    | Some p ->
+                                                                    (kv0
+                                                                    "onWhen"
+                                                                    (obj
+                                                                    ((exprf p) :: []))) :: []
+                                                                    | None ->
+                                                                    [])
+                                                                    (
+                                                                    (kv0
+                                                                    "steps"
+                                                                    (ysteps
+                                                                    o.oc_steps)) :: []))))))) :: [])) :: []))) :: [])))) :: [])
+
+(** val yroute : ehconf -> bool -> route -> chars **)
+
+let yroute e rc r =
   obj
     ((kv0 "route"
        (obj
          (app ((kv0 "id" (jstr r.r_id)) :: [])
            (app (yeh e)
-             ((kv0 "from"
-                (obj
-                  ((kv0 "uri" (jstr (app (s0 "direct:") r.r_from))) :: (
-                  (kv0 "steps" (ysteps r.r_steps)) :: [])))) :: []))))) :: [])
+             (app
+               (if rc
+                then (kv0 "routeConfigurationId" (jstr (s0 "ocConfig"))) :: []
+                else [])
+               ((kv0 "from"
+                  (obj
+                    ((kv0 "uri" (jstr (app (s0 "direct:") r.r_from))) :: (
+                    (kv0 "steps" (ysteps r.r_steps)) :: [])))) :: [])))))) :: [])
 
-(** val yaml_program : clause list -> ehconf -> route list -> chars **)
+(** val yaml_program :
+    clause list -> ehconf -> oncomp option -> route list -> chars **)
 
-let yaml_program c e p =
-  arr (app (map yclause c) (map (yroute e) p))
+let yaml_program c e oC p =
+  arr
+    (app (map yclause c)
+      (app (match oC with
+            | Some o -> (yoc o) :: []
+            | None -> [])
+        (match p with
+         | [] -> []
+         | r1 :: rs ->
+           (yroute e (match oC with
+                      | Some _ -> true
+                      | None -> false) r1) :: (map (yroute e false) rs))))

@@ -51,3 +51,7 @@ A differential result is only as good as these pieces, which no proof covers:
    DeadLetterChannelDefinition (maximumRedeliveries n, redeliveryDelay 0, useOriginalMessage / useOriginalBody) set on
    every route with RouteDefinition.errorHandler (as the route-level `<errorHandler>` of error-handler.adoc 259-268),
    next to the route-scoped onException copies of item 8; mock:dead is recorded like mock:m1/m2.
+17. **L3 onCompletion** (harness/route/RouteRun.java): the program's `(onCompletion always|complete|failure <onWhen>
+   after|before 0|1 <steps>)` is an OnCompletionDefinition (onCompleteOnly / onFailureOnly / onWhen / mode /
+   useOriginalMessage) added as an output of the first route only (route scope, the route the sends go to); the YAML
+   DSL text puts it in a routeConfiguration the first route refers to (oncompletion.adoc 91).

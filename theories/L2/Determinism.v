@@ -100,4 +100,19 @@ Qed.
 Corollary steps_deterministic : forall g x ss g1 x1 t1 g2 x2 t2,
   bss P real C EHc g x ss g1 x1 t1 -> bss P real C EHc g x ss g2 x2 t2 -> g1 = g2 /\ x1 = x2 /\ t1 = t2.
 Proof. intros. exact (proj1 rules_deterministic _ _ _ _ _ _ H _ _ _ H0). Qed.
+(** onCompletion has one outcome too (its steps are a list of steps, [steps_deterministic]). *)
+Corollary oncompletion_deterministic : forall oc g x g1 x1 t1 g2 x2 t2,
+  boc P real C EHc oc g x g1 x1 t1 -> boc P real C EHc oc g x g2 x2 t2 -> g1 = g2 /\ x1 = x2 /\ t1 = t2.
+Proof.
+  intros oc g x g1 x1 t1 g2 x2 t2 H1 H2.
+  inversion H1; subst; inversion H2; subst; try congruence;
+  repeat match goal with
+         | A : ?a = ?b, B : ?a = ?c |- _ => lazymatch b with c => clear B | _ => rewrite A in B; first [discriminate B | inversion B; subst; clear B | clear B] end
+         end;
+  try (repeat split; reflexivity); try congruence;
+  match goal with
+  | A : bss _ _ _ _ ?g ?y ?ss _ _ _, B : bss _ _ _ _ ?g ?y ?ss _ _ _ |- _ =>
+      destruct (steps_deterministic _ _ _ _ _ _ _ _ _ A B) as (-> & -> & ->); auto
+  end.
+Qed.
 End Det.
