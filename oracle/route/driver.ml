@@ -109,7 +109,8 @@ let pclause (k : clause) =
   "(onException (ex" ^ String.concat "" (List.map (fun t -> " " ^ pc t) k.c_ex) ^ ") "
   ^ (match k.c_when with None -> "(none)" | Some p -> ex p) ^ " "
   ^ (match k.c_handled with None -> "-" | Some true -> "1" | Some false -> "0") ^ " "
-  ^ (if k.c_continued then "1" else "0") ^ " " ^ string_of_int k.c_redeliveries ^ psteps k.c_steps ^ ")"
+  ^ (if k.c_continued then "1" else "0") ^ " " ^ string_of_int k.c_redeliveries ^ " "
+  ^ (match k.c_retry with None -> "(none)" | Some p -> ex p) ^ " " ^ (if k.c_onredel then "1" else "0") ^ psteps k.c_steps ^ ")"
 let pclauses cs = "(clauses" ^ String.concat "" (List.map (fun k -> " " ^ pclause k) cs) ^ ")"
 (* the program's error handler: nothing for the default one, (eh dlc <mock> <redeliveries> none|msg|body) *)
 let peh = function
@@ -287,6 +288,7 @@ let gen_oc () : oncomp option =
   else Some { oc_trig = pick [ OcAlways; OcComplete; OcFailure ]; oc_when = (if Random.int 3 = 0 then Some (gen_pred ()) else None);
               oc_before = Random.bool (); oc_orig = Random.int 4 = 0;
               oc_steps = (match gen_block () with [] -> [ STo (EMock (chars "m1")) ] | b -> b) }
+let rw_bias = ref 4   (* family rw: retryWhile / onRedelivery on every second clause *)
 let gen_clauses () : clause list =
   if Random.int 3 = 0 then []
   else
@@ -297,7 +299,20 @@ let gen_clauses () : clause list =
           c_when = (if Random.int 4 = 0 then Some (gen_pred ()) else None);
           c_handled = h; c_continued = k;
           c_redeliveries = (if Random.int 3 = 0 then 1 + Random.int 2 else 0);
-          c_steps = gen_block () })
+          c_steps = gen_block ();
+          c_retry = None; c_onredel = false })
+    |> List.map (fun k ->
+        (* retryWhile: always bounded by the redelivery counter ("${header.CamelRedeliveryCounter} < N", maybe && a
+           predicate), never with maximumRedeliveries (which would add the max counter header) *)
+        let k = if Random.int !rw_bias = 0 then
+            let bound = ACmp (LFn (FHeader (0, chars "CamelRedeliveryCounter")), OLt, RLit (LNum (Big_int_Z.big_int_of_int (Random.int 4)))) in
+            let rest = if Random.bool () then PNil
+              else match gen_pred () with
+                | XSimple (PPred (PS (a, PNil))) -> PCons (LAnd, a, PNil)
+                | _ -> PNil in
+            { k with c_retry = Some (XSimple (PPred (PS (bound, rest)))); c_redeliveries = 0 }
+          else k in
+        if Random.int !rw_bias = 0 then { k with c_onredel = true } else k)
 
 let gen_case () : clause list * route list * send list =
   let nr = 1 + Random.int 3 in
@@ -330,6 +345,7 @@ let count_hits rs =
 let () =
   let fam = Sys.argv.(1) and seed = int_of_string Sys.argv.(2) and count = int_of_string Sys.argv.(3) in
   Random.init seed;
+  if fam = "rw" then rw_bias := 2;
   for i = 1 to count do
     let clauses, routes, sends = if fam = "combo" then Combo.gen_case () else gen_case () in
     let eh = if fam = "dlc" then EHDlc (chars "dead", Random.int 3, pick [ UONone; UOMessage; UOBody ]) else gen_eh () in

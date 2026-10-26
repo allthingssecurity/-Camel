@@ -23,6 +23,7 @@
       [EHP] .../pages/exception-handling-patterns.adoc  [ER] .../pages/exception-redelivery.adoc
       [DEH] .../pages/defaulterrorhandler.adoc          [DLC] .../eips/pages/dead-letter-channel.adoc
       [OC]  docs/user-manual/modules/ROOT/pages/oncompletion.adoc
+      [EXA] docs/user-manual/modules/ROOT/pages/exception-advanced.adoc
       [SPL] .../eips/pages/split-eip.adoc          [MCE] .../eips/pages/multicast-eip.adoc
       [RLE] .../eips/pages/recipientList-eip.adoc
       [AS]  core/camel-core-model/src/main/java/org/apache/camel/builder/AggregationStrategies.java (javadoc)
@@ -175,7 +176,9 @@ Record route : Type := mkRoute { r_id : chars; r_from : chars; r_steps : list st
     clauses of a program apply to all its routes (RouteBuilder scope [EC.154-158]); route-scoped clauses: not yet. *)
 Record clause : Type := mkClause {
   c_ex : list chars; c_when : option expr; c_handled : option bool; c_continued : bool;
-  c_redeliveries : nat; c_steps : list step }.
+  c_redeliveries : nat; c_steps : list step;
+  c_retry : option expr;    (* retryWhile [EXA.393-425] *)
+  c_onredel : bool }.       (* onRedeliveryRef to the harness's fixed processor (L3.onRedelivery) *)
 
 (** The error handler of the program's routes [EH.25-47]: the default error handler, or a dead letter channel
     [DLC.25-31] with its dead letter endpoint (a mock here), maximumRedeliveries (redeliveryDelay 0) and which message
@@ -738,6 +741,13 @@ Definition not_redelivered_headers (n : nat) (x : exchange) : exchange :=
   | O => map_headers (fun hs => hset (str "CamelRedeliveryCounter") (VInt 0) (hset (str "CamelRedelivered") (VBool false) hs)) x
   | S _ => x
   end.
+Definition eh_outcome_n (k : clause) (n : nat) (x : exchange) (e : exn) (y : exchange) : option exchange :=
+  if c_continued k then
+    match c_handled k with Some true => None | _ => Some (drop_redelivery_headers (set_eh y (x_eh x))) end
+  else match c_handled k with
+       | Some true => Some (drop_redelivery_headers (set_done (set_eh y (x_eh x)) true))
+       | _ => Some (set_seen (set_exn (not_redelivered_headers n (set_eh y (x_eh x))) (Some e)) true)
+       end.
 Definition eh_outcome (k : clause) (x : exchange) (e : exn) (y : exchange) : option exchange :=
   if c_continued k then
     match c_handled k with Some true => None | _ => Some (drop_redelivery_headers (set_eh y (x_eh x))) end
@@ -751,6 +761,55 @@ Definition eh_outcome (k : clause) (x : exchange) (e : exn) (y : exchange) : opt
 Definition block_input (k : clause) (x : exchange) : exchange :=
   if c_continued k || match c_handled k with Some true => true | _ => false end then x
   else match c_redeliveries k with O => not_redelivered_headers 0 x | n => redelivery_headers n x end.
+(*! R L3.retryWhile DOC [EXA.393-425] [DLC.583-584] [M:onException.retryWhile] *)
+(** "Camel will redeliver until the predicate returns false"; the redelivery counter "is the redelivery attempt, will
+    start from 1" [EXA.396-397, EXA.421]; retryWhile "will overrule" the maximum redeliveries [EXA.405-407]; the
+    CamelRedeliveryMaxCounter header "is absent if you use retryWhile" [DLC.583-584]. The predicate is evaluated on
+    the failed exchange with CamelRedelivered=true and CamelRedeliveryCounter=k for the k-th redelivery. A predicate
+    still true after 10 redeliveries: redelivery forever (not modelled, the generator bounds the counter). *)
+Fixpoint retry_n (fuel k : nat) (p : expr) (x : exchange) : r0 nat :=
+  match fuel with
+  | O => Uns0 "EXA: retryWhile still true after 10 redeliveries (redelivery forever: not modelled)"
+  | S f =>
+      match eval_pred (map_headers (fun hs => hset (str "CamelRedeliveryCounter") (VInt (Z.of_nat k))
+                                               (hset (str "CamelRedelivered") (VBool true) hs)) x) p with
+      | PB true => match retry_n f (S k) p x with Ok0 n => Ok0 (S n) | Uns0 w => Uns0 w end
+      | PB false => Ok0 O
+      | PUns w => Uns0 w
+      end
+  end.
+(** With retryWhile (and so a redelivery option on the clause), the clause inherits the error handler's
+    maximumRedeliveries [ER.21-25]; whether the max counter header then shows it conflicts with [DLC.583-584]: no rule
+    when that inherited maximum is not 0 (Camel shows it: runs/rw1-real random-601-2900; doc-bugs.md). *)
+Definition redeliveries (k : clause) (x : exchange) : r0 nat :=
+  match c_retry k with
+  | None => Ok0 (c_redeliveries k)
+  | Some p => match EHc with
+              | EHDlc _ (S _) _ => Uns0 "ER/DLC: retryWhile with a maximumRedeliveries inherited from the error handler (max counter header: docs conflict)"
+              | _ => retry_n 10 1 p x
+              end
+  end.
+(*! R L3.onRedelivery DOC [EXA.242-253] [DLC.345-396] [M:onException.onRedeliveryRef] *)
+(** "a processor that is invoked before each redelivery attempt. Can be used to change the exchange before it is
+    redelivered" [M:onException.onRedeliveryRef]. The harness's processor (the registry bean "onRedel") appends "r" to
+    the header onr. *)
+(*! R L3.onRedelivery.reset CODE harness/probes/RetryWhileProbe.java *)
+(** Not documented: whether the changes of one onRedelivery call are still there at the next. Camel restores the
+    message before each redelivery (probe: 2 redeliveries, 2 calls, onr="r"): after n >= 1 redeliveries the exchange
+    is the failed one with one call's changes. *)
+Definition onr_apply (x : exchange) : exchange :=
+  let s := match hget (str "onr") (m_headers (x_msg x)) with VStr t => t | _ => [] end in
+  map_headers (hset (str "onr") (VStr (s ++ str "r"))) x.
+Definition after_redelivery (k : clause) (n : nat) (x : exchange) : exchange :=
+  match n with O => x | S _ => if c_onredel k then onr_apply x else x end.
+Definition redelivery_headers_rw (rw : bool) (n : nat) (x : exchange) : exchange :=
+  if rw then map_headers (fun hs => hset (str "CamelRedeliveryCounter") (VInt (Z.of_nat n)) (hset (str "CamelRedelivered") (VBool true) hs)) x
+  else redelivery_headers n x.
+(** [block_input] with the number of redeliveries made and whether retryWhile decided it. *)
+Definition block_input_n (k : clause) (n : nat) (x : exchange) : exchange :=
+  let x := after_redelivery k n x in
+  if c_continued k || match c_handled k with Some true => true | _ => false end then x
+  else match n with O => not_redelivered_headers 0 x | _ => redelivery_headers_rw (match c_retry k with Some _ => true | None => false end) n x end.
 (** A new exception that surfaces at a composite step (a split/multicast wrapper) and that no clause matches goes
     on to the caller; it gets no redelivery headers there (runs/oe3-real random-61-2239). *)
 Definition surface (x : exchange) : exchange :=
@@ -911,17 +970,20 @@ with bs1 : gstate -> exchange -> step -> gstate -> exchange -> list event -> Pro
 (*! R L3.dlc.clause-redelivery.real CODE findings/2026-10-26-dlc-useoriginal-lost-with-onexception-redelivery.md *)
 (** Real-mode delta: then Camel moves the current message (useOriginalMessage/Body of the dead letter channel is
     replaced by the clause's, unset). *)
-| BThrowDLCClause : forall g x c m k q n uo x',
+| BThrowDLCClause : forall g x c m k q n uo x' r,
     x_eh x = true -> select_clause (set_exn x (Some (mkExn c m None))) (mkExn c m None) = Ok0 (Some k) ->
-    dlc_takes k = true -> c_handled k = None -> EHc = EHDlc q n uo -> dlc_out (if real then UONone else uo) x = Some x' ->
+    redeliveries k (set_exn x (Some (mkExn c m None))) = Ok0 r ->
+    dlc_takes k = true -> c_handled k = None -> EHc = EHDlc q n uo ->
+    dlc_out (if real then UONone else uo) (after_redelivery k r x) = Some x' ->
     bs1 g x (SThrow c m) g x' [EvMock q x' false]
 (*! R L3.onException DOC [EC.3-9] [EHP.60-74] [ER.18-19] [DEH.20-25] *)
-| BThrowEH : forall g x c m k g' y t x',
+| BThrowEH : forall g x c m k g' y t x' r,
     x_eh x = true -> select_clause (set_exn x (Some (mkExn c m None))) (mkExn c m None) = Ok0 (Some k) ->
+    redeliveries k (set_exn x (Some (mkExn c m None))) = Ok0 r ->
     dlc_takes k = false ->
-    bss g (set_eh (block_input k x) false) (c_steps k) g' y t ->
+    bss g (set_eh (block_input_n k r x) false) (c_steps k) g' y t ->
     x_stop y = false -> x_exn y = None -> x_done y = false ->
-    eh_outcome k x (mkExn c m None) y = Some x' ->
+    eh_outcome_n k r x (mkExn c m None) y = Some x' ->
     bs1 g x (SThrow c m) g' x' t
 (*! R L3.doTry DOC [DT.9-27] [M:doTry.24] *)
 (** "its own error handler and mimics how try/catch/finally works in Java" [DT.26-27]: the steps run, then what
@@ -1147,7 +1209,11 @@ with bfin : gstate -> exchange -> option exn -> option (list step) -> gstate -> 
     steps threw too, "the original exception is kept and the exception from the doFinally block is added as a
     suppressed exception" [DT.227-229]. Whether the steps see the pending exception on the exchange is not documented
     (events marked [exn_unknown]); a stop inside doFinally while an exception is pending is not documented (no rule). *)
-| BFPending : forall g x e fs g' x' t, bss g x fs g' x' t -> x_stop x' = false ->
+(** An exchange completed inside the doFinally (a called route's error handler moved it, L3.dlc.direct) while an
+    exception is pending: complete and failed at once, not documented (no rule; Camel then runs only the first step
+    of an enclosing doCatch: runs/rw2-real rw-602-939, the cause of
+    findings/2026-10-26-dofinally-only-first-step-after-handled-direct.md). *)
+| BFPending : forall g x e fs g' x' t, bss g x fs g' x' t -> x_stop x' = false -> x_done x' = false ->
     bfin g x (Some e) (Some fs) g' (keep_pending e x') (unknown_exn t)
 with bch : gstate -> exchange -> list (expr * list step) -> option (list step) -> gstate -> exchange -> list event -> Prop :=
 (*! R L2.choice.first-match DOC [CH.9-12] [M:choice.25] *)
@@ -1296,10 +1362,13 @@ with run1 (fuel : nat) (g : gstate) (x : exchange) (s : step) {struct fuel} : ou
                                   end
                 end
             | Ok0 (Some k) =>
+                match redeliveries k xe with
+                | Uns0 w => OUns w
+                | Ok0 r =>
                 if dlc_takes k then
                   match c_handled k, EHc with
                   | None, EHDlc q _ uo =>
-                      match dlc_out (if real then UONone else uo) x with
+                      match dlc_out (if real then UONone else uo) (after_redelivery k r x) with
                       | Some x' => ODone g x' [EvMock q x' false] ["L2.throwException"; "L3.onException.select"; "L3.dlc.clause-redelivery"; "L3.dlc"; "L3.dlc.result"]
                       | None => OUns "DLC: the original message of an aggregator's output is not documented"
                       end
@@ -1307,17 +1376,20 @@ with run1 (fuel : nat) (g : gstate) (x : exchange) (s : step) {struct fuel} : ou
                   | Some _, _ => OUns "DLC: handled set on an onException without steps, with a dead letter channel: not documented"
                   end
                 else
-                seqo (run f g (set_eh (block_input k x) false) (c_steps k)) (fun g' y t h =>
+                seqo (run f g (set_eh (block_input_n k r x) false) (c_steps k)) (fun g' y t h =>
                   if x_stop y then OUns "EHP: stop inside an onException block not documented"
                   else match x_exn y with
                        | Some _ => OUns "EHP: an exception inside an onException block not modelled"
                        | None => if x_done y then OUns "EHP: handled inside an onException block"
-                                 else match eh_outcome k x e y with
+                                 else match eh_outcome_n k r x e y with
                                       | Some x' => ODone g' x' t ("L2.throwException" :: "L3.onException" :: "L3.onException.select" ::
-                                                     "L3.onException.outcome" :: (match c_redeliveries k with O => h | S _ => "L3.redelivery.headers" :: h end))
+                                                     "L3.onException.outcome" :: (match r with O => h | S _ => "L3.redelivery.headers" ::
+                                                       (match c_retry k with Some _ => "L3.retryWhile" :: h | None => h end) end)
+                                                     ++ (if c_onredel k then ["L3.onRedelivery"; "L3.onRedelivery.reset"] else []))
                                       | None => OUns "EHP: handled and continued both true not documented"
                                       end
                        end)
+                end
             end
           else ODone g (default_failed x e) [] ["L2.throwException"; "L3.errorHandler.default"]
       | SDoTry body cs fin =>
@@ -1596,6 +1668,7 @@ with runfin (fuel : nat) (g : gstate) (x : exchange) (p : option exn) (fin : opt
             match p with
             | None => ODone g' (set_done x' (x_done x || x_done x')) t ("L3.doFinally.run" :: (if x_done x then "L3.doFinally.after-complete" :: h else h))
             | Some e => if x_stop x' then OUns "DT: stop inside doFinally while an exception is pending"
+                        else if x_done x' then OUns "DT: the exchange completed (dead letter channel in a called route) in a doFinally while an exception is pending: not documented"
                         else ODone g' (keep_pending e x') (unknown_exn t) ("L3.doFinally.pending" :: h)
             end)
       end
@@ -1676,16 +1749,17 @@ Proof.
     + inversion H; subst. constructor.
     + destruct (x_eh x) eqn:Heh.
       * destruct (select_clause (set_exn x (Some (mkExn cls msg None))) (mkExn cls msg None)) as [[k|]|w] eqn:Sel; [| |discriminate].
-        -- destruct (dlc_takes k) eqn:Dt.
+        -- destruct (redeliveries k (set_exn x (Some (mkExn cls msg None)))) as [r|w] eqn:Rd; [|discriminate].
+           destruct (dlc_takes k) eqn:Dt.
            { destruct (c_handled k) as [hb|] eqn:Hk; [discriminate|].
              destruct EHc as [|q n uo] eqn:He; [discriminate|].
-             destruct (dlc_out (if real then UONone else uo) x) as [xo|] eqn:Ho; [|discriminate].
+             destruct (dlc_out (if real then UONone else uo) (after_redelivery k r x)) as [xo|] eqn:Ho; [|discriminate].
              inversion H; subst. eapply BThrowDLCClause; eauto. }
            apply seqo_done in H as [g1 [y [t1 [h1 [H1 H2]]]]].
            destruct (x_stop y) eqn:Hs; [discriminate|].
            destruct (x_exn y) as [e'|] eqn:Hx; [discriminate|].
            destruct (x_done y) eqn:Hd; [discriminate|].
-           destruct (eh_outcome k x (mkExn cls msg None) y) as [xo|] eqn:Ho; [|discriminate].
+           destruct (eh_outcome_n k r x (mkExn cls msg None) y) as [xo|] eqn:Ho; [|discriminate].
            inversion H2; subst. eapply BThrowEH; eauto.
         -- destruct EHc as [|q n uo] eqn:He.
            ++ inversion H; subst. apply BThrow. right. split; [exact Sel|exact He].
@@ -1835,7 +1909,8 @@ Proof.
     + destruct (real && x_done x && match p with None => true | Some _ => false end) eqn:Hrd; [discriminate|].
       apply seqo_done in H as [g1 [x1 [t1 [h1 [H1 H2]]]]].
       destruct p as [e|].
-      * destruct (x_stop x1) eqn:Hs1; [discriminate|]. inversion H2; subst. eapply BFPending; eauto.
+      * destruct (x_stop x1) eqn:Hs1; [discriminate|]. destruct (x_done x1) eqn:Hd1; [discriminate|].
+        inversion H2; subst. eapply BFPending; eauto.
       * simpl in H1. rewrite Bool.andb_true_r in Hrd. inversion H2; subst. eapply BFRun; eauto.
     + inversion H; subst. constructor.
   - intros g x ws o g' x' t h H. destruct ws as [|[p ss] ws']; simpl in H.
@@ -1906,7 +1981,8 @@ Inductive sres : Type :=
 (** A clause with no steps and no option (handled, continued, redelivery): Camel refuses the route at creation
     ("is not configured", OnExceptionDefinition.validateConfiguration); not documented: the whole case is UNSPECIFIED. *)
 Definition clause_unconfigured (k : clause) : bool :=
-  match c_steps k, c_handled k, c_continued k, c_redeliveries k with [], None, false, O => true | _, _, _, _ => false end.
+  match c_steps k, c_handled k, c_continued k, c_redeliveries k, c_retry k, c_onredel k with
+  | [], None, false, O, None, false => true | _, _, _, _, _, _ => false end.
 
 Fixpoint run_case_ (real : bool) (C : list clause) (E : ehconf) (OC : option oncomp) (fuel : nat) (P : list route) (g : gstate) (ss : list send) : list sres * gstate :=
   match ss with
@@ -2027,7 +2103,7 @@ Proof. vm_compute. reflexivity. Qed.
 Definition iae : chars := str "java.lang.IllegalArgumentException".
 Definition nfe : chars := str "java.lang.NumberFormatException".
 Definition cl (ts : list chars) (h : option bool) (k : bool) (n : nat) (ss : list step) : clause :=
-  mkClause ts None h k n ss.
+  mkClause ts None h k n ss None false.
 Definition failing : list step := [SSetBody (sx "x"); SThrow iae (str "boom"); STo (EMock (str "after"))].
 Definition runC (C : list clause) (ss : list step) : out := run [] false C EHDefault 30 g0 (new_exchange InOut VNull []) ss.
 (** [EHP.60-67]: handled: the route stops, the response is what the block produces, no exception to the caller. *)

@@ -130,11 +130,18 @@ Definition xsteps (l : list step) : chars := concat_with [] (map xstep l).
 (*! R L6.xml.onException DOC [M:onException] [M:redeliveryPolicy] *)
 (** A clause is an [onException] element at the start of the route: [exception] elements, [onWhen], a
     [redeliveryPolicy] element, [handled]/[continued] as expressions (here constants), and the steps. *)
+(*! R L6.xml.retryWhile DOC [M:onException.retryWhile] [M:onException.onRedeliveryRef] [EXA.278-285] *)
+(** retryWhile is an expression element after onWhen; onRedeliveryRef an attribute ([EXA.278-285]); with retryWhile
+    the redelivery policy only sets the delay (an explicit maximumRedeliveries would add the max counter header). *)
 Definition xclause (k : clause) : chars :=
-  elem "onException" []
+  elem "onException" (if c_onredel k then attr "onRedeliveryRef" (s "onRedel") else [])
     (concat_with [] (map (fun t => elem "exception" [] (xesc t)) (c_ex k)) ++
      (match c_when k with Some p => elem "onWhen" [] (xexpr p) | None => [] end) ++
-     (match c_redeliveries k with O => [] | n => empty "redeliveryPolicy" (attr "maximumRedeliveries" (ntxt n) ++ attr "redeliveryDelay" (s "0")) end) ++
+     (match c_retry k with Some p => elem "retryWhile" [] (xexpr p) | None => [] end) ++
+     (match c_retry k, c_redeliveries k with
+      | Some _, _ => empty "redeliveryPolicy" (attr "redeliveryDelay" (s "0"))
+      | None, O => []
+      | None, n => empty "redeliveryPolicy" (attr "maximumRedeliveries" (ntxt n) ++ attr "redeliveryDelay" (s "0")) end) ++
      (match c_handled k with Some b => elem "handled" [] (elem "constant" [] (btxt b)) | None => [] end) ++
      (if c_continued k then elem "continued" [] (elem "constant" [] (s "true")) else []) ++
      xsteps (c_steps k)).

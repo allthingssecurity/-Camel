@@ -1128,7 +1128,8 @@ type route = { r_id : chars; r_from : chars; r_steps : step list }
 
 type clause = { c_ex : chars list; c_when : expr option;
                 c_handled : bool option; c_continued : bool;
-                c_redeliveries : int; c_steps : step list }
+                c_redeliveries : int; c_steps : step list;
+                c_retry : expr option; c_onredel : bool }
 
 type uomode =
 | UONone
@@ -1314,9 +1315,20 @@ val drop_redelivery_headers : exchange -> exchange
 
 val not_redelivered_headers : int -> exchange -> exchange
 
-val eh_outcome : clause -> exchange -> exn -> exchange -> exchange option
+val eh_outcome_n :
+  clause -> int -> exchange -> exn -> exchange -> exchange option
 
-val block_input : clause -> exchange -> exchange
+val retry_n : int -> int -> expr -> exchange -> int r0
+
+val redeliveries : ehconf -> clause -> exchange -> int r0
+
+val onr_apply : exchange -> exchange
+
+val after_redelivery : clause -> int -> exchange -> exchange
+
+val redelivery_headers_rw : bool -> int -> exchange -> exchange
+
+val block_input_n : clause -> int -> exchange -> exchange
 
 val surface : exchange -> exchange
 

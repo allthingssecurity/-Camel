@@ -132,12 +132,19 @@ Fixpoint ystep (st : step) : chars :=
 Definition ysteps (l : list step) : chars := arr (map ystep l).
 
 (*! R L6.yaml.onException DOC [YML.36] [M:onException] [M:redeliveryPolicy] *)
+(*! R L6.yaml.retryWhile DOC [M:onException.retryWhile] [M:onException.onRedeliveryRef] [EXA.290-300] *)
 (** [onException] is a top-level entry [YML.36] (the RouteBuilder scope of the program's clauses). *)
 Definition yclause (k : clause) : chars :=
   obj [kv "onException" (obj (
     [kv "exception" (arr (map jstr (c_ex k)))] ++
     (match c_when k with Some p => [kv "onWhen" (obj [exprf p])] | None => [] end) ++
-    (match c_redeliveries k with O => [] | n => [kv "redeliveryPolicy" (obj [kv "maximumRedeliveries" (ntxt n); kv "redeliveryDelay" (jstr (s "0"))])] end) ++
+    (* L6.yaml.retryWhile: retryWhile an expression, onRedeliveryRef [EXA.290-300] *)
+    (match c_retry k with Some p => [kv "retryWhile" (yexpr p)] | None => [] end) ++
+    (if c_onredel k then [kv "onRedeliveryRef" (jstr (s "onRedel"))] else []) ++
+    (match c_retry k, c_redeliveries k with
+     | Some _, _ => [kv "redeliveryPolicy" (obj [kv "redeliveryDelay" (jstr (s "0"))])]
+     | None, O => []
+     | None, n => [kv "redeliveryPolicy" (obj [kv "maximumRedeliveries" (ntxt n); kv "redeliveryDelay" (jstr (s "0"))])] end) ++
     (match c_handled k with Some b => [kv "handled" (obj [kv "constant" (jstr (btxt b))])] | None => [] end) ++
     (if c_continued k then [kv "continued" (obj [kv "constant" (jstr (s "true"))])] else []) ++
     [kv "steps" (ysteps (c_steps k))]))].

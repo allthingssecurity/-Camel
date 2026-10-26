@@ -40,6 +40,12 @@
   for InOut; Real delta L3.onCompletion.before-original.real)
 - 2026-10-26-oncompletion-copy-aliases-original-message.md (onCompletion copy shares the original Message the DLC
   put on the exchange: the caller's exchange is changed; Real delta L3.onCompletion.alias.real)
+- 2026-10-26-routingslip-uses-stale-recipientlist-value.md (combo agent; high: slip/dynamic router routes to a
+  recipient list's endpoints; 4.22.1, 4.23.0 too)
+- 2026-10-26-dotry-in-caller-disables-eip-error-handling-in-called-route.md (combo agent; medium-high: duplicates,
+  lost redeliveries, lost failure; 4.22.1, 4.23.0 too)
+- 2026-10-26-docatch-skipped-after-continued-failure-in-called-route.md (combo agent; high; regression in 4.23.0 by
+  CAMEL-25115, correct in 4.22.1)
 - 2026-10-26-dofinally-only-first-step-after-handled-direct.md (doFinally after a direct: call handled by the called
   route's error handler runs only its first step; also 4.22.1, 4.23.0; Real delta L3.doFinally.after-complete.real)
 
@@ -96,3 +102,12 @@ so far are the aggregator's deferred output (timing), not leaks. A background hu
 - Not modelled: global (context) scope, parallelProcessing, several onCompletions, onCompletion in called routes.
 - Minimizing with a marker: put `(toMock dead)` as the only onCompletion step and minimize on "dead=..."; keep the
   clauses / eh / onCompletion forms (scratchpad minimize_keep3.py: skip p[0] in (0,1,2)).
+
+## L3 retryWhile / onRedelivery (2026-10-26)
+- Probe RetryWhileProbe: redelivery at the point of failure; retryWhile overrules maximumRedeliveries (counter < 3 ->
+  2 redeliveries); max counter header absent with retryWhile alone, present when a maximum is set or inherited;
+  onRedelivery called before each redelivery, but the message is restored each time (2 calls, onr="r"); a predicate
+  that stays true redelivers forever (OOM in the probe): the generator bounds it by the counter.
+- Family `rw`: retryWhile / onRedelivery on every second clause. Runs: rw2-real 5000 / 0, rw2-doc 5000 / 97,
+  rw2-rand-real 4000 / 0, rw2-dlc-real 3000 / 0, rw2-oc-real 3000 / 0, rw2-xml-real 3000 / 0.
+- combo-real2 (combo family, Real, after L3.dlc settled): 3000 cases, 0 mismatches, 26 hangs (now reported).

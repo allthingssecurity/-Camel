@@ -22,7 +22,9 @@ import org.apache.camel.spi.VariableRepositoryFactory;
  */
 public class RouteRun {
     static final int[] LASTINFLIGHT = {0};
-    static java.util.concurrent.ExecutorService WORKER = java.util.concurrent.Executors.newSingleThreadExecutor();
+    // daemon: a main that dies (e.g. OutOfMemoryError) must not be kept alive by a send still blocked in the worker
+    static java.util.concurrent.ThreadFactory DAEMON = r -> { Thread th = new Thread(r, "route-send"); th.setDaemon(true); return th; };
+    static java.util.concurrent.ExecutorService WORKER = java.util.concurrent.Executors.newSingleThreadExecutor(DAEMON);
     // ---- encoding (CONVENTIONS.md / driver.ml) ----
     static String pct(String s) {
         StringBuilder b = new StringBuilder();
@@ -333,7 +335,15 @@ public class RouteRun {
         if (k.kids.get(4).atom.equals("1")) o.continued(true);
         int n = Integer.parseInt(k.kids.get(5).atom);
         if (n > 0) o.maximumRedeliveries(n).redeliveryDelay(Long.getLong("redelivery.delay", 0));
-        steps(o, k, 6);
+        // retryWhile (L3.retryWhile): only the delay is set with it, so no max counter header
+        Sx rw = k.kids.get(6);
+        if (!rw.head().equals("none")) {
+            o.setRetryWhile(new ExpressionSubElementDefinition(expr(rw)));
+            o.redeliveryDelay(Long.getLong("redelivery.delay", 0));
+        }
+        // onRedelivery (L3.onRedelivery): the registry bean onRedel appends "r" to the header onr
+        if (k.kids.get(7).atom.equals("1")) o.setOnRedeliveryRef("onRedel");
+        steps(o, k, 8);
         return o;
     }
 
@@ -348,6 +358,10 @@ public class RouteRun {
         DefaultCamelContext ctx = new DefaultCamelContext();
         ctx.disableJMX();
         ctx.getRegistry().bind("syncExec", new org.apache.camel.util.concurrent.SynchronousExecutorService());
+        ctx.getRegistry().bind("onRedel", (Processor) e -> {
+            Object v = e.getMessage().getHeader("onr");
+            e.getMessage().setHeader("onr", (v == null ? "" : v.toString()) + "r");
+        });
         if (xml != null) {
             org.apache.camel.support.PluginHelper.getRoutesLoader(ctx)
                 .loadRoutes(org.apache.camel.support.ResourceHelper.fromString("yaml".equals(dsl) ? "memory:routes.yaml" : "memory:routes.xml", xml));
@@ -416,7 +430,7 @@ public class RouteRun {
                     x = fut.get(Long.getLong("hang.seconds", 10), java.util.concurrent.TimeUnit.SECONDS);
                 } catch (java.util.concurrent.TimeoutException te) {
                     WORKER.shutdownNow();
-                    WORKER = java.util.concurrent.Executors.newSingleThreadExecutor();
+                    WORKER = java.util.concurrent.Executors.newSingleThreadExecutor(DAEMON);
                     throw new IllegalStateException("HANG: the exchange did not complete within 10 s");
                 }
                 out.add("[" + String.join("|", events) + "]" + snap(x));
@@ -447,7 +461,7 @@ public class RouteRun {
 
     public static void main(String[] a) throws Exception {
         long t0 = System.currentTimeMillis();
-        int total = 0, agree = 0, mism = 0, unspec = 0, err = 0, sendsCmp = 0;
+        int total = 0, agree = 0, mism = 0, unspec = 0, err = 0, sendsCmp = 0, hangs = 0;
         Map<String, Integer> unspecWhy = new TreeMap<>();
         try (BufferedReader in = Files.newBufferedReader(Path.of(a[0]));
              PrintWriter mw = new PrintWriter(Files.newBufferedWriter(Path.of(a[1] + ".mism.tsv")));
@@ -469,6 +483,15 @@ public class RouteRun {
                     if (dt > 2000) System.err.println("SLOW " + dt + "ms " + f[0]);
                     if (LASTINFLIGHT[0] > 0) { System.err.println("  ^ case " + f[0]); LASTINFLIGHT[0] = 0; }
                 } catch (Exception e) {
+                    if (LASTINFLIGHT[0] > 0) { System.err.println("  ^ case " + f[0]); LASTINFLIGHT[0] = 0; }
+                    // a send that did not return is reported as HANG whatever the rules say about the case (a hang is
+                    // never an UNSPECIFIED outcome: no documented behaviour blocks the caller forever)
+                    if (String.valueOf(e.getMessage()).startsWith("HANG")) {
+                        hangs++;
+                        mw.println(f[0] + "	HANG	" + pct(String.valueOf(e.getMessage())) + "	" + f[3] + "	" + f[1] + "	" + f[2]);
+                        System.err.println("HANG " + f[0]);
+                        continue;
+                    }
                     if (exp[0].startsWith("U:")) {   // the rules call the case UNSPECIFIED (e.g. refused at route creation)
                         unspec++;
                         unspecWhy.merge(unpct(exp[0].substring(2)), 1, Integer::sum);
@@ -504,8 +527,8 @@ public class RouteRun {
             }
         }
         WORKER.shutdownNow();
-        System.out.printf("ALL cases %d sends-compared %d agree %d mismatch %d setup-error %d unspec-sends %d (%.1fs)%n",
-                total, sendsCmp, agree, mism, err, unspec, (System.currentTimeMillis() - t0) / 1000.0);
+        System.out.printf("ALL cases %d sends-compared %d agree %d mismatch %d setup-error %d unspec-sends %d hangs %d (%.1fs)%n",
+                total, sendsCmp, agree, mism, err, unspec, hangs, (System.currentTimeMillis() - t0) / 1000.0);
         unspecWhy.forEach((k, v) -> System.out.println("  U " + v + "\t" + k));
     }
 }

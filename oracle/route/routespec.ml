@@ -18744,7 +18744,8 @@ type route = { r_id : chars; r_from : chars; r_steps : step list }
 
 type clause = { c_ex : chars list; c_when : expr option;
                 c_handled : bool option; c_continued : bool;
-                c_redeliveries : int; c_steps : step list }
+                c_redeliveries : int; c_steps : step list;
+                c_retry : expr option; c_onredel : bool }
 
 type uomode =
 | UONone
@@ -21269,10 +21270,10 @@ let not_redelivered_headers n0 x =
     (fun _ -> x)
     n0
 
-(** val eh_outcome :
-    clause -> exchange -> exn -> exchange -> exchange option **)
+(** val eh_outcome_n :
+    clause -> int -> exchange -> exn -> exchange -> exchange option **)
 
-let eh_outcome k x e y =
+let eh_outcome_n k n0 x e y =
   if k.c_continued
   then (match k.c_handled with
         | Some b ->
@@ -21285,31 +21286,107 @@ let eh_outcome k x e y =
                  (drop_redelivery_headers (set_done (set_eh y x.x_eh) true))
           else Some
                  (set_seen
-                   (set_exn
-                     (not_redelivered_headers k.c_redeliveries
-                       (set_eh y x.x_eh))
+                   (set_exn (not_redelivered_headers n0 (set_eh y x.x_eh))
                      (Some e))
                    true)
         | None ->
           Some
             (set_seen
-              (set_exn
-                (not_redelivered_headers k.c_redeliveries (set_eh y x.x_eh))
-                (Some e))
+              (set_exn (not_redelivered_headers n0 (set_eh y x.x_eh)) (Some
+                e))
               true))
 
-(** val block_input : clause -> exchange -> exchange **)
+(** val retry_n : int -> int -> expr -> exchange -> int r0 **)
 
-let block_input k x =
+let rec retry_n fuel k p x =
+  (fun fO fS n -> if n=0 then fO () else fS (n-1))
+    (fun _ -> Uns0
+    "EXA: retryWhile still true after 10 redeliveries (redelivery forever: not modelled)")
+    (fun f ->
+    match eval_pred
+            (map_headers (fun hs ->
+              hset (str "CamelRedeliveryCounter") (VInt (Z.of_nat k))
+                (hset (str "CamelRedelivered") (VBool true) hs))
+              x)
+            p with
+    | PB b ->
+      if b
+      then (match retry_n f (Stdlib.Int.succ k) p x with
+            | Ok0 n0 -> Ok0 (Stdlib.Int.succ n0)
+            | Uns0 w -> Uns0 w)
+      else Ok0 0
+    | PUns0 w -> Uns0 w)
+    fuel
+
+(** val redeliveries : ehconf -> clause -> exchange -> int r0 **)
+
+let redeliveries eHc k x =
+  match k.c_retry with
+  | Some p ->
+    (match eHc with
+     | EHDefault ->
+       retry_n (Stdlib.Int.succ (Stdlib.Int.succ (Stdlib.Int.succ
+         (Stdlib.Int.succ (Stdlib.Int.succ (Stdlib.Int.succ (Stdlib.Int.succ
+         (Stdlib.Int.succ (Stdlib.Int.succ (Stdlib.Int.succ 0))))))))))
+         (Stdlib.Int.succ 0) p x
+     | EHDlc (_, n0, _) ->
+       ((fun fO fS n -> if n=0 then fO () else fS (n-1))
+          (fun _ ->
+          retry_n (Stdlib.Int.succ (Stdlib.Int.succ (Stdlib.Int.succ
+            (Stdlib.Int.succ (Stdlib.Int.succ (Stdlib.Int.succ
+            (Stdlib.Int.succ (Stdlib.Int.succ (Stdlib.Int.succ
+            (Stdlib.Int.succ 0)))))))))) (Stdlib.Int.succ 0) p x)
+          (fun _ -> Uns0
+          "ER/DLC: retryWhile with a maximumRedeliveries inherited from the error handler (max counter header: docs conflict)")
+          n0))
+  | None -> Ok0 k.c_redeliveries
+
+(** val onr_apply : exchange -> exchange **)
+
+let onr_apply x =
+  let s1 =
+    match hget (str "onr") x.x_msg.m_headers with
+    | VNull -> []
+    | VStr t -> t
+    | _ -> []
+  in
+  map_headers (hset (str "onr") (VStr (app s1 (str "r")))) x
+
+(** val after_redelivery : clause -> int -> exchange -> exchange **)
+
+let after_redelivery k n0 x =
+  (fun fO fS n -> if n=0 then fO () else fS (n-1))
+    (fun _ -> x)
+    (fun _ -> if k.c_onredel then onr_apply x else x)
+    n0
+
+(** val redelivery_headers_rw : bool -> int -> exchange -> exchange **)
+
+let redelivery_headers_rw rw n0 x =
+  if rw
+  then map_headers (fun hs ->
+         hset (str "CamelRedeliveryCounter") (VInt (Z.of_nat n0))
+           (hset (str "CamelRedelivered") (VBool true) hs))
+         x
+  else redelivery_headers n0 x
+
+(** val block_input_n : clause -> int -> exchange -> exchange **)
+
+let block_input_n k n0 x =
+  let x0 = after_redelivery k n0 x in
   if (||) k.c_continued (match k.c_handled with
                          | Some b -> b
                          | None -> false)
-  then x
+  then x0
   else ((fun fO fS n -> if n=0 then fO () else fS (n-1))
-          (fun _ -> not_redelivered_headers 0 x)
-          (fun n0 ->
-          redelivery_headers (Stdlib.Int.succ n0) x)
-          k.c_redeliveries)
+          (fun _ -> not_redelivered_headers 0 x0)
+          (fun _ ->
+          redelivery_headers_rw
+            (match k.c_retry with
+             | Some _ -> true
+             | None -> false)
+            n0 x0)
+          n0)
 
 (** val surface : exchange -> exchange **)
 
@@ -21563,50 +21640,62 @@ let run0 p real c eHc =
               | Ok0 a ->
                 (match a with
                  | Some k ->
-                   if dlc_takes eHc k
-                   then (match k.c_handled with
-                         | Some _ ->
-                           OUns
-                             "DLC: handled set on an onException without steps, with a dead letter channel: not documented"
-                         | None ->
-                           (match eHc with
-                            | EHDefault -> OUns "impossible"
-                            | EHDlc (q, _, uo) ->
-                              (match dlc_out (if real then UONone else uo) x with
-                               | Some x' ->
-                                 ODone (g, x', ((EvMock (q, x',
-                                   false)) :: []),
-                                   ("L2.throwException" :: ("L3.onException.select" :: ("L3.dlc.clause-redelivery" :: ("L3.dlc" :: ("L3.dlc.result" :: []))))))
-                               | None ->
-                                 OUns
-                                   "DLC: the original message of an aggregator's output is not documented")))
-                   else seqo
-                          (run1 f g (set_eh (block_input k x) false)
-                            k.c_steps)
-                          (fun g' y t h ->
-                          if y.x_stop
-                          then OUns
-                                 "EHP: stop inside an onException block not documented"
-                          else (match y.x_exn with
-                                | Some _ ->
-                                  OUns
-                                    "EHP: an exception inside an onException block not modelled"
-                                | None ->
-                                  if y.x_done
-                                  then OUns
-                                         "EHP: handled inside an onException block"
-                                  else (match eh_outcome k x e y with
-                                        | Some x' ->
-                                          ODone (g', x', t,
-                                            ("L2.throwException" :: ("L3.onException" :: ("L3.onException.select" :: ("L3.onException.outcome" :: (
-                                            (fun fO fS n -> if n=0 then fO () else fS (n-1))
-                                              (fun _ -> h)
-                                              (fun _ ->
-                                              "L3.redelivery.headers" :: h)
-                                              k.c_redeliveries))))))
-                                        | None ->
-                                          OUns
-                                            "EHP: handled and continued both true not documented")))
+                   (match redeliveries eHc k xe with
+                    | Ok0 r ->
+                      if dlc_takes eHc k
+                      then (match k.c_handled with
+                            | Some _ ->
+                              OUns
+                                "DLC: handled set on an onException without steps, with a dead letter channel: not documented"
+                            | None ->
+                              (match eHc with
+                               | EHDefault -> OUns "impossible"
+                               | EHDlc (q, _, uo) ->
+                                 (match dlc_out (if real then UONone else uo)
+                                          (after_redelivery k r x) with
+                                  | Some x' ->
+                                    ODone (g, x', ((EvMock (q, x',
+                                      false)) :: []),
+                                      ("L2.throwException" :: ("L3.onException.select" :: ("L3.dlc.clause-redelivery" :: ("L3.dlc" :: ("L3.dlc.result" :: []))))))
+                                  | None ->
+                                    OUns
+                                      "DLC: the original message of an aggregator's output is not documented")))
+                      else seqo
+                             (run1 f g (set_eh (block_input_n k r x) false)
+                               k.c_steps)
+                             (fun g' y t h ->
+                             if y.x_stop
+                             then OUns
+                                    "EHP: stop inside an onException block not documented"
+                             else (match y.x_exn with
+                                   | Some _ ->
+                                     OUns
+                                       "EHP: an exception inside an onException block not modelled"
+                                   | None ->
+                                     if y.x_done
+                                     then OUns
+                                            "EHP: handled inside an onException block"
+                                     else (match eh_outcome_n k r x e y with
+                                           | Some x' ->
+                                             ODone (g', x', t,
+                                               ("L2.throwException" :: ("L3.onException" :: ("L3.onException.select" :: ("L3.onException.outcome" :: 
+                                               (app
+                                                 ((fun fO fS n -> if n=0 then fO () else fS (n-1))
+                                                    (fun _ -> h)
+                                                    (fun _ ->
+                                                    "L3.redelivery.headers" :: (
+                                                    match k.c_retry with
+                                                    | Some _ ->
+                                                      "L3.retryWhile" :: h
+                                                    | None -> h))
+                                                    r)
+                                                 (if k.c_onredel
+                                                  then "L3.onRedelivery" :: ("L3.onRedelivery.reset" :: [])
+                                                  else [])))))))
+                                           | None ->
+                                             OUns
+                                               "EHP: handled and continued both true not documented")))
+                    | Uns0 w -> OUns w)
                  | None ->
                    (match eHc with
                     | EHDefault ->
@@ -22055,8 +22144,11 @@ let run0 p real c eHc =
                  if x'.x_stop
                  then OUns
                         "DT: stop inside doFinally while an exception is pending"
-                 else ODone (g', (keep_pending e x'), (unknown_exn t),
-                        ("L3.doFinally.pending" :: h))
+                 else if x'.x_done
+                      then OUns
+                             "DT: the exchange completed (dead letter channel in a called route) in a doFinally while an exception is pending: not documented"
+                      else ODone (g', (keep_pending e x'), (unknown_exn t),
+                             ("L3.doFinally.pending" :: h))
                | None ->
                  ODone (g', (set_done x' ((||) x.x_done x'.x_done)), t,
                    ("L3.doFinally.run" :: (if x.x_done
@@ -22159,7 +22251,10 @@ let clause_unconfigured k =
        if k.c_continued
        then false
        else ((fun fO fS n -> if n=0 then fO () else fS (n-1))
-               (fun _ -> true)
+               (fun _ ->
+               match k.c_retry with
+               | Some _ -> false
+               | None -> if k.c_onredel then false else true)
                (fun _ -> false)
                k.c_redeliveries))
   | _ :: _ -> false
@@ -22468,29 +22563,39 @@ let xsteps l =
 (** val xclause : clause -> chars **)
 
 let xclause k =
-  elem "onException" []
+  elem "onException"
+    (if k.c_onredel then attr "onRedeliveryRef" (s "onRedel") else [])
     (app (concat_with [] (map (fun t -> elem "exception" [] (xesc t)) k.c_ex))
       (app
         (match k.c_when with
          | Some p -> elem "onWhen" [] (xexpr p)
          | None -> [])
         (app
-          ((fun fO fS n -> if n=0 then fO () else fS (n-1))
-             (fun _ -> [])
-             (fun n0 ->
-             empty "redeliveryPolicy"
-               (app (attr "maximumRedeliveries" (ntxt (Stdlib.Int.succ n0)))
-                 (attr "redeliveryDelay" (s "0"))))
-             k.c_redeliveries)
+          (match k.c_retry with
+           | Some p -> elem "retryWhile" [] (xexpr p)
+           | None -> [])
           (app
-            (match k.c_handled with
-             | Some b -> elem "handled" [] (elem "constant" [] (btxt b))
-             | None -> [])
+            (match k.c_retry with
+             | Some _ ->
+               empty "redeliveryPolicy" (attr "redeliveryDelay" (s "0"))
+             | None ->
+               ((fun fO fS n -> if n=0 then fO () else fS (n-1))
+                  (fun _ -> [])
+                  (fun n0 ->
+                  empty "redeliveryPolicy"
+                    (app
+                      (attr "maximumRedeliveries" (ntxt (Stdlib.Int.succ n0)))
+                      (attr "redeliveryDelay" (s "0"))))
+                  k.c_redeliveries))
             (app
-              (if k.c_continued
-               then elem "continued" [] (elem "constant" [] (s "true"))
-               else [])
-              (xsteps k.c_steps))))))
+              (match k.c_handled with
+               | Some b -> elem "handled" [] (elem "constant" [] (btxt b))
+               | None -> [])
+              (app
+                (if k.c_continued
+                 then elem "continued" [] (elem "constant" [] (s "true"))
+                 else [])
+                (xsteps k.c_steps)))))))
 
 (** val xeh : ehconf -> chars **)
 
@@ -22961,28 +23066,43 @@ let yclause k =
               | Some p -> (kv0 "onWhen" (obj ((exprf p) :: []))) :: []
               | None -> [])
              (app
-               ((fun fO fS n -> if n=0 then fO () else fS (n-1))
-                  (fun _ -> [])
-                  (fun n0 ->
-                  (kv0 "redeliveryPolicy"
-                    (obj
-                      ((kv0 "maximumRedeliveries"
-                         (ntxt0 (Stdlib.Int.succ n0))) :: ((kv0
-                                                             "redeliveryDelay"
-                                                             (jstr (s0 "0"))) :: [])))) :: [])
-                  k.c_redeliveries)
+               (match k.c_retry with
+                | Some p -> (kv0 "retryWhile" (yexpr p)) :: []
+                | None -> [])
                (app
-                 (match k.c_handled with
-                  | Some b ->
-                    (kv0 "handled"
-                      (obj ((kv0 "constant" (jstr (btxt0 b))) :: []))) :: []
-                  | None -> [])
+                 (if k.c_onredel
+                  then (kv0 "onRedeliveryRef" (jstr (s0 "onRedel"))) :: []
+                  else [])
                  (app
-                   (if k.c_continued
-                    then (kv0 "continued"
-                           (obj ((kv0 "constant" (jstr (s0 "true"))) :: []))) :: []
-                    else [])
-                   ((kv0 "steps" (ysteps k.c_steps)) :: [])))))))) :: [])
+                   (match k.c_retry with
+                    | Some _ ->
+                      (kv0 "redeliveryPolicy"
+                        (obj ((kv0 "redeliveryDelay" (jstr (s0 "0"))) :: []))) :: []
+                    | None ->
+                      ((fun fO fS n -> if n=0 then fO () else fS (n-1))
+                         (fun _ -> [])
+                         (fun n0 ->
+                         (kv0 "redeliveryPolicy"
+                           (obj
+                             ((kv0 "maximumRedeliveries"
+                                (ntxt0 (Stdlib.Int.succ n0))) :: ((kv0
+                                                                    "redeliveryDelay"
+                                                                    (jstr
+                                                                    (s0 "0"))) :: [])))) :: [])
+                         k.c_redeliveries))
+                   (app
+                     (match k.c_handled with
+                      | Some b ->
+                        (kv0 "handled"
+                          (obj ((kv0 "constant" (jstr (btxt0 b))) :: []))) :: []
+                      | None -> [])
+                     (app
+                       (if k.c_continued
+                        then (kv0 "continued"
+                               (obj
+                                 ((kv0 "constant" (jstr (s0 "true"))) :: []))) :: []
+                        else [])
+                       ((kv0 "steps" (ysteps k.c_steps)) :: [])))))))))) :: [])
 
 (** val yeh : ehconf -> chars list **)
 

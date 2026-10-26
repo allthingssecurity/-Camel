@@ -97,3 +97,10 @@ Camel aa63c0a4cb94. Each entry: page and line, what it says, what Camel does, ev
   no exception, in both cases (harness/probes/DlcEmptyClauseProbe.java). With a step in the clause, the same
   handled(false) propagates the exception. Candidate: document that a step-less clause only overrides the redelivery
   and leaves the outcome to the error handler.
+
+- dead-letter-channel.adoc 583-584 says CamelRedeliveryMaxCounter "is absent if you use retryWhile". But
+  exception-redelivery.adoc 21-25 says a clause with any redelivery option inherits the error handler's
+  maximumRedeliveries. Camel shows that inherited maximum in the header, also with retryWhile (runs/rw1-real
+  random-601-2900: a dead letter channel with maximumRedeliveries 2 and a clause with retryWhile give
+  CamelRedeliveryMaxCounter=2). It is the same when the clause sets maximumRedeliveries itself
+  (harness/probes/RetryWhileProbe.java: "retry<3 max=1"). Candidate: the header is absent only when no maximum applies.

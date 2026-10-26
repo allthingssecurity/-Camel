@@ -55,3 +55,8 @@ A differential result is only as good as these pieces, which no proof covers:
    after|before 0|1 <steps>)` is an OnCompletionDefinition (onCompleteOnly / onFailureOnly / onWhen / mode /
    useOriginalMessage) added as an output of the first route only (route scope, the route the sends go to); the YAML
    DSL text puts it in a routeConfiguration the first route refers to (oncompletion.adoc 91).
+18. **Hangs** (harness/route/RouteRun.java, amends item 10): a send that does not return within the timeout is
+   counted as a hang and written to .mism.tsv, also when the rules call that case UNSPECIFIED (before 2026-10-26 such
+   hangs were counted as UNSPECIFIED: notes/combo.md). A HANG can also be a 30 s direct: consumer timeout caused by a
+   wrong destination (findings/2026-10-26-routingslip-uses-stale-recipientlist-value.md).
+19. **onRedelivery**: the registry bean "onRedel" (the only processor the specs know) appends "r" to the header onr.

@@ -26,7 +26,7 @@ for f in files:
     examples[L] += len(re.findall(r'^Example doc_', src, re.M))
     theorems[L] += re.findall(r'^(?:Theorem|Lemma) (\w+)', src, re.M)
 
-runs = defaultdict(lambda: [0, 0, 0, 0, 0])   # cases, agree, mismatch, setup-error, unspec
+runs = defaultdict(lambda: [0, 0, 0, 0, 0, 0])   # cases, agree, mismatch, setup-error, unspec, hangs
 cur = open('oracle/route/BUILD-INFO').read() if os.path.exists('oracle/route/BUILD-INFO') else None
 superseded = set()
 for f in glob.glob('runs/*/*.summary'):
@@ -34,11 +34,11 @@ for f in glob.glob('runs/*/*.summary'):
     if not os.path.exists(bi) or open(bi).read() != cur:
         superseded.add(os.path.basename(os.path.dirname(f))); continue
     for line in open(f):
-        m = re.match(r'ALL cases (\d+) sends-compared \d+ agree (\d+) mismatch (\d+) setup-error (\d+) unspec-sends (\d+)', line)
+        m = re.match(r'ALL cases (\d+) sends-compared \d+ agree (\d+) mismatch (\d+) setup-error (\d+) unspec-sends (\d+)(?: hangs (\d+))?', line)
         if m:
             md = os.path.join(os.path.dirname(f), 'MODE')
             r = runs['L2 routes, ' + (open(md).read().strip() if os.path.exists(md) else 'doc') + ' mode']
-            for i, v in enumerate(map(int, m.groups())): r[i] += v
+            for i, v in enumerate(int(g or 0) for g in m.groups()): r[i] += v
 # L5 runs (their own summaries: harness/l5)
 for d in ('runs/l5-doc', 'runs/l5-real'):
     for f in glob.glob(d + '/*.l5summary'):
@@ -75,10 +75,10 @@ for L in ['Common', 'L0', 'L1', 'L2', 'L3', 'L4', 'L5', 'L6']:
     print(f'| {L} | {len(rules[L])} | {t["DOC"]} | {t["CODE"]} | {t["FIX"]} | {t["DOC-BUG"]} | {len(uns[L])} | '
           f'{examples[L]} | {", ".join(theorems[L]) or "-"} |')
 print('\n## Differential runs\n')
-print('| harness | cases | agree | mismatch | setup errors | UNSPECIFIED sends (counted, not compared) |')
-print('|---|---|---|---|---|---|')
+print('| harness | cases | agree | mismatch | setup errors | hangs | UNSPECIFIED sends (counted, not compared) |')
+print('|---|---|---|---|---|---|---|')
 for k, r in runs.items():
-    print(f'| {k} | {r[0]} | {r[1]} | {r[2]} | {r[3]} | {r[4]} |')
+    print(f'| {k} | {r[0]} | {r[1]} | {r[2]} | {r[3]} | {r[5] if len(r) > 5 else 0} | {r[4]} |')
 print(f'\nOnly runs made with the current oracle build (oracle/route/BUILD-INFO) are counted; superseded runs: '
       f'{", ".join(sorted(superseded)) or "none"} (their history is in notes/main.md).')
 for f in sorted(glob.glob('runs/*.md')):
