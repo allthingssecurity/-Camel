@@ -14,10 +14,11 @@ Section Props.
 Variable P : list route.
 Variable real : bool.
 Variable C : list clause.
+Variable EHc : ehconf.
 
 (** ** 1. A halted exchange (failed, stopped, or handled) makes no progress *)
 Theorem halted_no_progress : forall g x ss g' x' t,
-  bss P real C g x ss g' x' t -> halted x = true -> g' = g /\ x' = x /\ t = [].
+  bss P real C EHc g x ss g' x' t -> halted x = true -> g' = g /\ x' = x /\ t = [].
 Proof.
   intros g x ss g' x' t H Hh. inversion H; subst; auto.
   rewrite Hh in H0. discriminate.
@@ -26,8 +27,8 @@ Qed.
 (** ** 2. The pipeline law: [ss1 ++ ss2] runs [ss1], then [ss2] on its outcome, and the traces add up
     (pipeline-eip.adoc 131-132: "the output from the previous step is input to the next"). *)
 Theorem pipeline_app_split : forall ss1 ss2 g x g'' x'' t,
-  bss P real C g x (ss1 ++ ss2) g'' x'' t ->
-  exists g' x' t1 t2, bss P real C g x ss1 g' x' t1 /\ bss P real C g' x' ss2 g'' x'' t2 /\ t = t1 ++ t2.
+  bss P real C EHc g x (ss1 ++ ss2) g'' x'' t ->
+  exists g' x' t1 t2, bss P real C EHc g x ss1 g' x' t1 /\ bss P real C EHc g' x' ss2 g'' x'' t2 /\ t = t1 ++ t2.
 Proof.
   induction ss1 as [|s ss1 IH]; intros ss2 g x g'' x'' t H; simpl in H.
   - exists g, x, [], t. split; [constructor|]. split; auto.
@@ -41,8 +42,8 @@ Proof.
 Qed.
 
 Theorem pipeline_app_join : forall ss1 ss2 g x g' x' t1 g'' x'' t2,
-  bss P real C g x ss1 g' x' t1 -> bss P real C g' x' ss2 g'' x'' t2 ->
-  bss P real C g x (ss1 ++ ss2) g'' x'' (t1 ++ t2).
+  bss P real C EHc g x ss1 g' x' t1 -> bss P real C EHc g' x' ss2 g'' x'' t2 ->
+  bss P real C EHc g x (ss1 ++ ss2) g'' x'' (t1 ++ t2).
 Proof.
   induction ss1 as [|s ss1 IH]; intros ss2 g x g' x' t1 g'' x'' t2 H1 H2; simpl.
   - inversion H1; subst. exact H2.
@@ -55,7 +56,7 @@ Qed.
 
 (** ** 3. A pipeline block is transparent (pipeline-eip.adoc 138) *)
 Theorem pipeline_block : forall g x b g' x' t,
-  bs1 P real C g x (SPipeline b) g' x' t <-> bss P real C g x b g' x' t.
+  bs1 P real C EHc g x (SPipeline b) g' x' t <-> bss P real C EHc g x b g' x' t.
 Proof.
   split; intro H; [inversion H; subst; assumption | now apply BPipeline].
 Qed.
@@ -63,7 +64,7 @@ Qed.
 (** ** 4. An idempotent duplicate never reaches the block (idempotentConsumer-eip.adoc 62-65) *)
 Theorem idempotent_duplicate_skipped : forall g x id e eg body g' x' t v k,
   eval_expr x e = EV v -> text_of v = Some k -> is_closed g id k = true ->
-  bs1 P real C g x (SIdem id e true eg body) g' x' t -> g' = g /\ x' = x /\ t = [].
+  bs1 P real C EHc g x (SIdem id e true eg body) g' x' t -> g' = g /\ x' = x /\ t = [].
 Proof.
   intros g x id e eg body g' x' t v k Ev Tk Cl H. inversion H; subst; auto.
   (* BIdemNew needs the key not closed: the same key, so a contradiction *)

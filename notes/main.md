@@ -34,6 +34,8 @@
 - L5 agent: l5-catalog-missing-path-reported-invalid, l5-ignore-case-global-options-dropped,
   l5-seda-offertimeout-duration, l5-seda-size-max-value-ignored, l5-timer-pattern-not-kept, and one more (see the private note)
 - 2026-10-26-hang-routingslip-dotry-redelivery-lost-callback.md (a blocking send never returns; also in 4.22.1, 4.23.0)
+- 2026-10-26-dofinally-only-first-step-after-handled-direct.md (doFinally after a direct: call handled by the called
+  route's error handler runs only its first step; also 4.22.1, 4.23.0; Real delta L3.doFinally.after-complete.real)
 
 ## CODE-rule candidates (UNSPECIFIED classes where Camel was consistent; adopt only with exact semantics + citation)
 - Split item failed, no stopOnException, no threshold: the exchange fails with the item's exception, unwrapped
@@ -69,3 +71,13 @@ same seeds afterwards nor in a probe (harness/probes/AggHangProbe.java: aggregat
 6 000 sends). The harness now runs each blocking send on a worker thread with a 10 s timeout (HANG in the mismatch
 file) and reports exchanges still in flight when the case's context stops (INFLIGHT on stderr). INFLIGHT cases seen
 so far are the aggregator's deferred output (timing), not leaks. A background hunt (runs/hunt.log) is watching.
+
+## L3 dead letter channel (2026-10-26)
+- Rules L3.dlc*: error handler per program (ehconf), x_orig (unit-of-work original message). Composite failures
+  (clause_matches now also true under a DLC) stay UNSPECIFIED: a failure in a load balancer attempt, in a multicast
+  branch, at a split wrapper.
+- Probes: DlcProbe (caller result, headers, original across direct:/split), DlcLbProbe/2/3 and DlcEmptyClauseProbe
+  (the runs/dlc1-real mismatches were the step-less clause, not the load balancer), DlcDoTryDirectProbe (doFinally runs
+  after a handled direct: call; the steps after the doTry do not), FinallyFirstStepProbe (the finding).
+- Runs (oracle with L3.dlc*): dlc5-real 5000 / 0, dlc5-doc 5000 / 103, dlc5-rand-real 5000 / 0, dlc5-xml-real 3000 / 0,
+  dlc5-yaml-real 3000 / 0. Family `dlc`: always a dead letter channel, no clauses half of the time.

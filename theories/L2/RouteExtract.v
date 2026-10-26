@@ -9,4 +9,4 @@ From CamelSpec.L1 Require Simple.
 From CamelSpec.L2 Require Import Route.
 From CamelSpec.L6 Require Xml Yaml.
 Extraction Language OCaml.
-Extraction "oracle/route/routespec.ml" run_case Simple.render Text.str Exchange.g0 Text.lower Exchange.exn_class Exchange.exn_msg Convert.jname Xml.xml_program Yaml.yaml_program.
+Extraction "oracle/route/routespec.ml" run_case EHDefault EHDlc UONone UOMessage UOBody Simple.render Text.str Exchange.g0 Text.lower Exchange.exn_class Exchange.exn_msg Convert.jname Xml.xml_program Yaml.yaml_program.

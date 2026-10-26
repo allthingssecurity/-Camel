@@ -5,6 +5,7 @@
       [YML] dsl/camel-yaml-dsl/camel-yaml-dsl/src/main/docs/yaml-dsl.adoc
       [M:x] model/x.json (option names; "expression" options take a language object, "outputs" are [steps])
       [SPL] .../eips/pages/split-eip.adoc (#class:)
+      [EH]  docs/user-manual/modules/ROOT/pages/error-handler.adoc; [M:deadLetterChannel] model/deadLetterChannel.json
     The text is YAML in flow style (JSON syntax, which YAML includes): the parser gives the same node tree as the block
     style of the doc examples (TRUST.md). String escaping is JSON's, not Camel documentation. *)
 From Stdlib Require Import ZArith String Ascii List Bool.
@@ -142,8 +143,19 @@ Definition yclause (k : clause) : chars :=
     [kv "steps" (ysteps (c_steps k))]))].
 
 (*! R L6.yaml.routes DOC [YML.22-36] *)
-Definition yroute (r : route) : chars :=
-  obj [kv "route" (obj [kv "id" (jstr (r_id r));
-                        kv "from" (obj [kv "uri" (jstr (s "direct:" ++ r_from r)); kv "steps" (ysteps (r_steps r))])])].
-Definition yaml_program (C : list clause) (P : list route) : chars :=
-  arr (map yclause C ++ map yroute P).
+(*! R L6.yaml.errorHandler DOC [EH.315-327] [M:deadLetterChannel] *)
+(** The route's error handler as in the YAML tab of [EH.315-327]. *)
+Definition yeh (E : ehconf) : list chars :=
+  match E with
+  | EHDefault => []
+  | EHDlc q n uo =>
+      [kv "errorHandler" (obj [kv "deadLetterChannel" (obj (
+         [kv "deadLetterUri" (jstr (s "mock:" ++ q))] ++
+         match uo with UONone => [] | UOMessage => [kv "useOriginalMessage" (s "true")] | UOBody => [kv "useOriginalBody" (s "true")] end ++
+         [kv "redeliveryPolicy" (obj [kv "maximumRedeliveries" (ntxt n); kv "redeliveryDelay" (jstr (s "0"))])]))])]
+  end.
+Definition yroute (E : ehconf) (r : route) : chars :=
+  obj [kv "route" (obj ([kv "id" (jstr (r_id r))] ++ yeh E ++
+                        [kv "from" (obj [kv "uri" (jstr (s "direct:" ++ r_from r)); kv "steps" (ysteps (r_steps r))])]))].
+Definition yaml_program (C : list clause) (E : ehconf) (P : list route) : chars :=
+  arr (map yclause C ++ map (yroute E) P).

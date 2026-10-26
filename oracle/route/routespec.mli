@@ -358,7 +358,8 @@ type message = { m_body : val0; m_headers : (chars * val0) list }
 type exchange = { x_msg : message; x_props : (chars * val0) list;
                   x_vars : (chars * val0) list; x_mep : mep;
                   x_exn : exn option; x_stop : bool; x_eh : bool;
-                  x_seen : bool; x_done : bool; x_uow : (chars * chars) list }
+                  x_seen : bool; x_done : bool; x_uow : (chars * chars) list;
+                  x_orig : message option }
 
 type agroup = { ag_x : exchange; ag_n : int; ag_in : exchange list }
 
@@ -1129,6 +1130,15 @@ type clause = { c_ex : chars list; c_when : expr option;
                 c_handled : bool option; c_continued : bool;
                 c_redeliveries : int; c_steps : step list }
 
+type uomode =
+| UONone
+| UOMessage
+| UOBody
+
+type ehconf =
+| EHDefault
+| EHDlc of chars * int * uomode
+
 type event =
 | EvMock of chars * exchange * bool
 
@@ -1267,6 +1277,8 @@ val halted : exchange -> bool
 val merge_props :
   (chars * val0) list -> (chars * val0) list -> (chars * val0) list
 
+val is_dlc : ehconf -> bool
+
 val dist_f : int -> chars -> chars -> int option r0
 
 val lt2 : (int * int) -> (int * int) -> bool
@@ -1286,7 +1298,7 @@ val min_score : (((int * int) * bool) * clause) list -> (int * int) option
 
 val select_clause : clause list -> exchange -> exn -> clause option r0
 
-val clause_matches : clause list -> exchange -> bool
+val clause_matches : clause list -> ehconf -> exchange -> bool
 
 val redelivery_headers : int -> exchange -> exchange
 
@@ -1301,6 +1313,15 @@ val block_input : clause -> exchange -> exchange
 val surface : exchange -> exchange
 
 val default_failed : clause list -> exchange -> exn -> exchange
+
+val dlc_msg : uomode -> exchange -> message option
+
+val dlc_out : uomode -> exchange -> exchange option
+
+val dlc_fail :
+  clause list -> ehconf -> exchange -> exn -> (exchange * event list) option
+
+val dlc_takes : ehconf -> clause -> bool
 
 val seen_if_failed : exchange -> exchange
 
@@ -1320,8 +1341,8 @@ val tag : string -> out -> out
 val done1 : string -> gstate -> exchange -> out
 
 val run0 :
-  route list -> bool -> clause list -> int -> gstate -> exchange -> step list
-  -> out
+  route list -> bool -> clause list -> ehconf -> int -> gstate -> exchange ->
+  step list -> out
 
 type send = { s_to : chars; s_mep : mep; s_body : val0;
               s_headers : (chars * val0) list }
@@ -1333,12 +1354,12 @@ type sres =
 val clause_unconfigured : clause -> bool
 
 val run_case_ :
-  bool -> clause list -> int -> route list -> gstate -> send list -> sres
-  list * gstate
+  bool -> clause list -> ehconf -> int -> route list -> gstate -> send list ->
+  sres list * gstate
 
 val run_case :
-  bool -> clause list -> int -> route list -> gstate -> send list -> sres
-  list * gstate
+  bool -> clause list -> ehconf -> int -> route list -> gstate -> send list ->
+  sres list * gstate
 
 val s : string -> chars
 
@@ -1368,9 +1389,11 @@ val xsteps : step list -> chars
 
 val xclause : clause -> chars
 
-val xroute : clause list -> route -> chars
+val xeh : ehconf -> chars
 
-val xml_program : clause list -> route list -> chars
+val xroute : clause list -> ehconf -> route -> chars
+
+val xml_program : clause list -> ehconf -> route list -> chars
 
 val s0 : string -> chars
 
@@ -1414,6 +1437,8 @@ val ysteps : step list -> chars
 
 val yclause : clause -> chars
 
-val yroute : route -> chars
+val yeh : ehconf -> chars list
 
-val yaml_program : clause list -> route list -> chars
+val yroute : ehconf -> route -> chars
+
+val yaml_program : clause list -> ehconf -> route list -> chars

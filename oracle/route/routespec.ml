@@ -2168,7 +2168,8 @@ type message = { m_body : val0; m_headers : (chars * val0) list }
 type exchange = { x_msg : message; x_props : (chars * val0) list;
                   x_vars : (chars * val0) list; x_mep : mep;
                   x_exn : exn option; x_stop : bool; x_eh : bool;
-                  x_seen : bool; x_done : bool; x_uow : (chars * chars) list }
+                  x_seen : bool; x_done : bool; x_uow : (chars * chars) list;
+                  x_orig : message option }
 
 type agroup = { ag_x : exchange; ag_n : int; ag_in : exchange list }
 
@@ -2190,14 +2191,15 @@ let g0 =
 let new_exchange m body hs =
   { x_msg = { m_body = body; m_headers = hs }; x_props = []; x_vars = [];
     x_mep = m; x_exn = None; x_stop = false; x_eh = true; x_seen = false;
-    x_done = false; x_uow = [] }
+    x_done = false; x_uow = []; x_orig = (Some { m_body = body; m_headers =
+    hs }) }
 
 (** val with_msg : exchange -> message -> exchange **)
 
 let with_msg x m =
   { x_msg = m; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = x.x_seen;
-    x_done = x.x_done; x_uow = x.x_uow }
+    x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
 
 (** val set_body : exchange -> val0 -> exchange **)
 
@@ -2216,7 +2218,7 @@ let map_headers f x =
 let map_props f x =
   { x_msg = x.x_msg; x_props = (f x.x_props); x_vars = x.x_vars; x_mep =
     x.x_mep; x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen =
-    x.x_seen; x_done = x.x_done; x_uow = x.x_uow }
+    x.x_seen; x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
 
 (** val map_vars :
     ((chars * val0) list -> (chars * val0) list) -> exchange -> exchange **)
@@ -2224,42 +2226,42 @@ let map_props f x =
 let map_vars f x =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = (f x.x_vars); x_mep =
     x.x_mep; x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen =
-    x.x_seen; x_done = x.x_done; x_uow = x.x_uow }
+    x.x_seen; x_done = x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
 
 (** val set_exn : exchange -> exn option -> exchange **)
 
 let set_exn x e =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = e; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = false; x_done =
-    x.x_done; x_uow = x.x_uow }
+    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
 
 (** val set_stop : exchange -> bool -> exchange **)
 
 let set_stop x b =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = b; x_eh = x.x_eh; x_seen = x.x_seen; x_done =
-    x.x_done; x_uow = x.x_uow }
+    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
 
 (** val set_eh : exchange -> bool -> exchange **)
 
 let set_eh x b =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = b; x_seen = x.x_seen; x_done =
-    x.x_done; x_uow = x.x_uow }
+    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
 
 (** val set_seen : exchange -> bool -> exchange **)
 
 let set_seen x b =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = b; x_done =
-    x.x_done; x_uow = x.x_uow }
+    x.x_done; x_uow = x.x_uow; x_orig = x.x_orig }
 
 (** val set_done : exchange -> bool -> exchange **)
 
 let set_done x b =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = x.x_seen;
-    x_done = b; x_uow = x.x_uow }
+    x_done = b; x_uow = x.x_uow; x_orig = x.x_orig }
 
 (** val aget :
     chars -> (chars * (chars * val0) list) list -> (chars * val0) list **)
@@ -18744,6 +18746,15 @@ type clause = { c_ex : chars list; c_when : expr option;
                 c_handled : bool option; c_continued : bool;
                 c_redeliveries : int; c_steps : step list }
 
+type uomode =
+| UONone
+| UOMessage
+| UOBody
+
+type ehconf =
+| EHDefault
+| EHDlc of chars * int * uomode
+
 type event =
 | EvMock of chars * exchange * bool
 
@@ -18860,7 +18871,8 @@ let group_items o l =
 let sub_of x v =
   { x_msg = { m_body = v; m_headers = x.x_msg.m_headers }; x_props =
     x.x_props; x_vars = x.x_vars; x_mep = x.x_mep; x_exn = None; x_stop =
-    false; x_eh = x.x_eh; x_seen = false; x_done = false; x_uow = [] }
+    false; x_eh = x.x_eh; x_seen = false; x_done = false; x_uow = []; x_orig =
+    (Some { m_body = v; m_headers = x.x_msg.m_headers }) }
 
 (** val cee : exn -> exn **)
 
@@ -18879,7 +18891,7 @@ let has_maxfail o =
 let copy_of x =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = None; x_stop = false; x_eh = x.x_eh; x_seen = false; x_done =
-    false; x_uow = [] }
+    false; x_uow = []; x_orig = (Some x.x_msg) }
 
 (** val kvin : chars -> val0 -> (chars * val0) list -> bool **)
 
@@ -19012,7 +19024,7 @@ let is_closed g id k =
 let fresh x =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = None; x_stop = false; x_eh = true; x_seen = false; x_done = false;
-    x_uow = [] }
+    x_uow = []; x_orig = None }
 
 (** val sdt : step -> bool **)
 
@@ -20842,7 +20854,7 @@ let loop_copy orig cur =
   let c = copy_of orig in
   { x_msg = c.x_msg; x_props = c.x_props; x_vars = c.x_vars; x_mep = c.x_mep;
   x_exn = c.x_exn; x_stop = c.x_stop; x_eh = c.x_eh; x_seen = c.x_seen;
-  x_done = c.x_done; x_uow = cur.x_uow }
+  x_done = c.x_done; x_uow = cur.x_uow; x_orig = cur.x_orig }
 
 (** val rce : exn **)
 
@@ -20860,7 +20872,7 @@ let add_key =
 let add_uow x id k =
   { x_msg = x.x_msg; x_props = x.x_props; x_vars = x.x_vars; x_mep = x.x_mep;
     x_exn = x.x_exn; x_stop = x.x_stop; x_eh = x.x_eh; x_seen = x.x_seen;
-    x_done = x.x_done; x_uow = ((id, k) :: x.x_uow) }
+    x_done = x.x_done; x_uow = ((id, k) :: x.x_uow); x_orig = x.x_orig }
 
 (** val remove_key : gstate -> (chars * chars) -> gstate **)
 
@@ -21059,6 +21071,12 @@ let halted x =
 let merge_props base over =
   fold_left (fun acc pat -> let (k, v) = pat in pset k v acc) over base
 
+(** val is_dlc : ehconf -> bool **)
+
+let is_dlc = function
+| EHDefault -> false
+| EHDlc (_, _, _) -> true
+
 (** val dist_f : int -> chars -> chars -> int option r0 **)
 
 let rec dist_f fuel c t =
@@ -21197,15 +21215,15 @@ let select_clause c x e =
      | None -> Ok0 None)
   | Uns0 w -> Uns0 w
 
-(** val clause_matches : clause list -> exchange -> bool **)
+(** val clause_matches : clause list -> ehconf -> exchange -> bool **)
 
-let clause_matches c x =
+let clause_matches c eHc x =
   match x.x_exn with
   | Some e ->
     (match select_clause c x e with
      | Ok0 a -> (match a with
                  | Some _ -> true
-                 | None -> false)
+                 | None -> is_dlc eHc)
      | Uns0 _ -> true)
   | None -> false
 
@@ -21302,6 +21320,49 @@ let default_failed c x e =
   then not_redelivered_headers 0 x1
   else x1
 
+(** val dlc_msg : uomode -> exchange -> message option **)
+
+let dlc_msg uo x =
+  match uo with
+  | UONone -> Some x.x_msg
+  | UOMessage -> x.x_orig
+  | UOBody ->
+    option_map (fun o -> { m_body = o.m_body; m_headers = x.x_msg.m_headers })
+      x.x_orig
+
+(** val dlc_out : uomode -> exchange -> exchange option **)
+
+let dlc_out uo x =
+  option_map (fun m ->
+    drop_redelivery_headers (set_done (with_msg (set_exn x None) m) true))
+    (dlc_msg uo x)
+
+(** val dlc_fail :
+    clause list -> ehconf -> exchange -> exn -> (exchange * event list) option **)
+
+let dlc_fail c eHc x e =
+  if x.x_eh
+  then (match select_clause c (set_exn x (Some e)) e with
+        | Ok0 a ->
+          (match a with
+           | Some _ -> None
+           | None ->
+             (match eHc with
+              | EHDefault -> None
+              | EHDlc (q, _, uo) ->
+                option_map (fun x' -> (x', ((EvMock (q, x', false)) :: [])))
+                  (dlc_out uo x)))
+        | Uns0 _ -> None)
+  else None
+
+(** val dlc_takes : ehconf -> clause -> bool **)
+
+let dlc_takes eHc k =
+  (&&) (is_dlc eHc)
+    (match k.c_steps with
+     | [] -> negb k.c_continued
+     | _ :: _ -> false)
+
 (** val seen_if_failed : exchange -> exchange **)
 
 let seen_if_failed x =
@@ -21347,10 +21408,10 @@ let done1 r g x =
   ODone (g, x, [], (r :: []))
 
 (** val run0 :
-    route list -> bool -> clause list -> int -> gstate -> exchange -> step
-    list -> out **)
+    route list -> bool -> clause list -> ehconf -> int -> gstate -> exchange
+    -> step list -> out **)
 
-let run0 p real c =
+let run0 p real c eHc =
   let rec run1 fuel g x ss =
     (fun fO fS n -> if n=0 then fO () else fS (n-1))
       (fun _ -> OUns "fuel")
@@ -21361,7 +21422,8 @@ let run0 p real c =
         if halted x
         then done1 "L2.pipeline.halt" g x
         else seqo (run2 f g x s1) (fun g1 x1 t1 h1 ->
-               if (&&) ((&&) x1.x_eh (negb x1.x_seen)) (clause_matches c x1)
+               if (&&) ((&&) x1.x_eh (negb x1.x_seen))
+                    (clause_matches c eHc x1)
                then OUns
                       "EH: a new exception at a composite step that an onException clause matches (retry/handling there not modelled)"
                else seqo (run1 f g1 (surface x1) ss') (fun g2 x2 t2 h2 ->
@@ -21428,9 +21490,19 @@ let run0 p real c =
             | Some r ->
               seqo (run1 f g (set_eh x true) r.r_steps) (fun g' x' t h ->
                 if x'.x_done
-                then OUns
-                       "EH: an exception handled in a route called by direct: (does the caller continue?) not documented"
-                else if clause_matches c x'
+                then (match eHc with
+                      | EHDefault ->
+                        OUns
+                          "EH: an exception handled in a route called by direct: (does the caller continue?) not documented"
+                      | EHDlc (_, _, _) ->
+                        (match c with
+                         | [] ->
+                           ODone (g', (set_eh x' x.x_eh), t,
+                             ("L2.to.direct" :: ("L3.dlc.direct" :: h)))
+                         | _ :: _ ->
+                           OUns
+                             "EH: an exception handled in a route called by direct: (does the caller continue?) not documented"))
+                else if clause_matches c eHc x'
                      then OUns
                             "EH: a failure from a route called by direct: that a clause of the caller matches: not documented"
                      else ODone (g', (set_eh x' x.x_eh), t,
@@ -21449,34 +21521,63 @@ let run0 p real c =
               | Ok0 a ->
                 (match a with
                  | Some k ->
-                   seqo (run1 f g (set_eh (block_input k x) false) k.c_steps)
-                     (fun g' y t h ->
-                     if y.x_stop
-                     then OUns
-                            "EHP: stop inside an onException block not documented"
-                     else (match y.x_exn with
-                           | Some _ ->
-                             OUns
-                               "EHP: an exception inside an onException block not modelled"
-                           | None ->
-                             if y.x_done
-                             then OUns
-                                    "EHP: handled inside an onException block"
-                             else (match eh_outcome k x e y with
-                                   | Some x' ->
-                                     ODone (g', x', t,
-                                       ("L2.throwException" :: ("L3.onException" :: ("L3.onException.select" :: ("L3.onException.outcome" :: (
-                                       (fun fO fS n -> if n=0 then fO () else fS (n-1))
-                                         (fun _ -> h)
-                                         (fun _ ->
-                                         "L3.redelivery.headers" :: h)
-                                         k.c_redeliveries))))))
-                                   | None ->
-                                     OUns
-                                       "EHP: handled and continued both true not documented")))
+                   if dlc_takes eHc k
+                   then (match k.c_handled with
+                         | Some _ ->
+                           OUns
+                             "DLC: handled set on an onException without steps, with a dead letter channel: not documented"
+                         | None ->
+                           (match eHc with
+                            | EHDefault -> OUns "impossible"
+                            | EHDlc (q, _, uo) ->
+                              (match dlc_out uo x with
+                               | Some x' ->
+                                 ODone (g, x', ((EvMock (q, x',
+                                   false)) :: []),
+                                   ("L2.throwException" :: ("L3.onException.select" :: ("L3.dlc.clause-redelivery" :: ("L3.dlc" :: ("L3.dlc.result" :: []))))))
+                               | None ->
+                                 OUns
+                                   "DLC: the original message of an aggregator's output is not documented")))
+                   else seqo
+                          (run1 f g (set_eh (block_input k x) false)
+                            k.c_steps)
+                          (fun g' y t h ->
+                          if y.x_stop
+                          then OUns
+                                 "EHP: stop inside an onException block not documented"
+                          else (match y.x_exn with
+                                | Some _ ->
+                                  OUns
+                                    "EHP: an exception inside an onException block not modelled"
+                                | None ->
+                                  if y.x_done
+                                  then OUns
+                                         "EHP: handled inside an onException block"
+                                  else (match eh_outcome k x e y with
+                                        | Some x' ->
+                                          ODone (g', x', t,
+                                            ("L2.throwException" :: ("L3.onException" :: ("L3.onException.select" :: ("L3.onException.outcome" :: (
+                                            (fun fO fS n -> if n=0 then fO () else fS (n-1))
+                                              (fun _ -> h)
+                                              (fun _ ->
+                                              "L3.redelivery.headers" :: h)
+                                              k.c_redeliveries))))))
+                                        | None ->
+                                          OUns
+                                            "EHP: handled and continued both true not documented")))
                  | None ->
-                   ODone (g, (default_failed c x e), [],
-                     ("L2.throwException" :: ("L3.errorHandler.default" :: ("L3.redelivery.headers-after" :: [])))))
+                   (match eHc with
+                    | EHDefault ->
+                      ODone (g, (default_failed c x e), [],
+                        ("L2.throwException" :: ("L3.errorHandler.default" :: ("L3.redelivery.headers-after" :: []))))
+                    | EHDlc (q, _, uo) ->
+                      (match dlc_out uo x with
+                       | Some x' ->
+                         ODone (g, x', ((EvMock (q, x', false)) :: []),
+                           ("L2.throwException" :: ("L3.dlc" :: ("L3.dlc.result" :: ("L3.dlc.original-boundary" :: [])))))
+                       | None ->
+                         OUns
+                           "DLC: the original message of an aggregator's output is not documented")))
               | Uns0 w -> OUns w)
         else ODone (g, (default_failed c x e), [],
                ("L2.throwException" :: ("L3.errorHandler.default" :: [])))
@@ -21485,9 +21586,10 @@ let run0 p real c =
           seqo (runaft f g1 x1 cs fin) (fun g2 x2 t2 h2 ->
             if (&&)
                  ((&&) ((&&) real x.x_eh)
-                   (match c with
-                    | [] -> false
-                    | _ :: _ -> true))
+                   ((||) (match c with
+                          | [] -> false
+                          | _ :: _ -> true)
+                     (is_dlc eHc)))
                  (match x2.x_exn with
                   | Some _ -> true
                   | None -> false)
@@ -21550,9 +21652,15 @@ let run0 p real c =
                     else ODone (g2, x, t,
                            ("L2.aggregate" :: ("L2.aggregate.step" :: ("L2.aggregate.emit" :: h)))))
          | AgFail e ->
-           if (&&) x.x_eh (clause_matches c (set_exn x (Some e)))
-           then OUns
-                  "AGG: a closed correlation key that an onException clause matches: not modelled"
+           if (&&) x.x_eh (clause_matches c eHc (set_exn x (Some e)))
+           then (match dlc_fail c eHc x e with
+                 | Some p0 ->
+                   let (x', t) = p0 in
+                   ODone (g, x', t,
+                   ("L2.aggregate" :: ("L2.aggregate.fail" :: ("L3.dlc.step-failure" :: ("L3.dlc" :: [])))))
+                 | None ->
+                   OUns
+                     "AGG: a closed correlation key that an onException clause matches: not modelled")
            else ODone (g, (default_failed c x e), [],
                   ("L2.aggregate" :: ("L2.aggregate.step" :: ("L2.aggregate.fail" :: []))))
          | AgUns w -> OUns w)
@@ -21568,9 +21676,16 @@ let run0 p real c =
                    tag "L2.loop"
                      (tag "L2.loop.count" (runlp f g x cp body n0 x))
                  | LcFail ->
-                   if (&&) x.x_eh (clause_matches c (set_exn x (Some rce)))
-                   then OUns
-                          "LOOP: a bad loop count that an onException clause matches: not modelled"
+                   if (&&) x.x_eh
+                        (clause_matches c eHc (set_exn x (Some rce)))
+                   then (match dlc_fail c eHc x rce with
+                         | Some p0 ->
+                           let (x', t) = p0 in
+                           ODone (g, x', t,
+                           ("L2.loop" :: ("L2.loop.count-failure" :: ("L3.dlc.step-failure" :: ("L3.dlc" :: [])))))
+                         | None ->
+                           OUns
+                             "LOOP: a bad loop count that an onException clause matches: not modelled")
                    else ODone (g, (default_failed c x rce), [],
                           ("L2.loop" :: ("L2.loop.count" :: [])))
                  | LcUns w -> OUns w)
@@ -21618,9 +21733,15 @@ let run0 p real c =
         (match convert_body ty m x.x_msg.m_body with
          | CbBody w -> done1 "L2.convertBodyTo" g (set_body x w)
          | CbFail ->
-           if (&&) x.x_eh (clause_matches c (set_exn x (Some any_exn)))
-           then OUns
-                  "CB: a failed conversion that an onException clause matches: class not documented"
+           if (&&) x.x_eh (clause_matches c eHc (set_exn x (Some any_exn)))
+           then (match dlc_fail c eHc x any_exn with
+                 | Some p0 ->
+                   let (x', t) = p0 in
+                   ODone (g, x', t,
+                   ("L2.convertBodyTo" :: ("L3.dlc.step-failure" :: ("L3.dlc" :: []))))
+                 | None ->
+                   OUns
+                     "CB: a failed conversion that an onException clause matches: class not documented")
            else ODone (g, (default_failed c x any_exn), [],
                   ("L2.convertBodyTo" :: []))
          | CbUns w -> OUns w))
@@ -21874,15 +21995,31 @@ let run0 p real c =
       (fun f ->
       match fin with
       | Some fs ->
-        seqo (run1 f g x fs) (fun g' x' t h ->
-          match p0 with
-          | Some e ->
-            if x'.x_stop
-            then OUns
-                   "DT: stop inside doFinally while an exception is pending"
-            else ODone (g', (keep_pending e x'), (unknown_exn t),
-                   ("L3.doFinally.pending" :: h))
-          | None -> ODone (g', x', t, ("L3.doFinally.run" :: h)))
+        if (&&) ((&&) real x.x_done)
+             (match p0 with
+              | Some _ -> false
+              | None -> true)
+        then OUns
+               "REAL: doFinally after a handled direct: call runs only its first step (finding)"
+        else seqo
+               (run1 f g
+                 (match p0 with
+                  | Some _ -> x
+                  | None -> set_done x false)
+                 fs)
+               (fun g' x' t h ->
+               match p0 with
+               | Some e ->
+                 if x'.x_stop
+                 then OUns
+                        "DT: stop inside doFinally while an exception is pending"
+                 else ODone (g', (keep_pending e x'), (unknown_exn t),
+                        ("L3.doFinally.pending" :: h))
+               | None ->
+                 ODone (g', (set_done x' ((||) x.x_done x'.x_done)), t,
+                   ("L3.doFinally.run" :: (if x.x_done
+                                           then "L3.doFinally.after-complete" :: h
+                                           else h))))
       | None -> done1 "L3.doTry.no-finally" g (keep p0 x))
       fuel
   and runch fuel g x ws o =
@@ -21929,33 +22066,33 @@ let clause_unconfigured k =
   | _ :: _ -> false
 
 (** val run_case_ :
-    bool -> clause list -> int -> route list -> gstate -> send list -> sres
-    list * gstate **)
+    bool -> clause list -> ehconf -> int -> route list -> gstate -> send list
+    -> sres list * gstate **)
 
-let rec run_case_ real c fuel p g = function
+let rec run_case_ real c e fuel p g = function
 | [] -> ([], g)
 | s1 :: ss' ->
   (match find_route p s1.s_to with
    | Some r ->
-     (match run0 p real c fuel g
+     (match run0 p real c e fuel g
               (new_exchange s1.s_mep s1.s_body s1.s_headers) r.r_steps with
       | ODone (g', x, t, h) ->
-        let (rs, g'') = run_case_ real c fuel p (complete_uow real g' x) ss'
+        let (rs, g'') = run_case_ real c e fuel p (complete_uow real g' x) ss'
         in
         (((SDone (t, x, h)) :: rs), g'')
       | OUns w -> (((SUns w) :: []), g))
    | None -> (((SUns "DC: send to direct: without a consumer") :: []), g))
 
 (** val run_case :
-    bool -> clause list -> int -> route list -> gstate -> send list -> sres
-    list * gstate **)
+    bool -> clause list -> ehconf -> int -> route list -> gstate -> send list
+    -> sres list * gstate **)
 
-let run_case real c fuel p g ss =
+let run_case real c e fuel p g ss =
   if existsb clause_unconfigured c
   then (((SUns
          "EC: onException without steps or options (refused at route creation; not documented)") :: []),
          g)
-  else run_case_ real c fuel p g ss
+  else run_case_ real c e fuel p g ss
 
 (** val s : string -> chars **)
 
@@ -22239,18 +22376,35 @@ let xclause k =
                else [])
               (xsteps k.c_steps))))))
 
-(** val xroute : clause list -> route -> chars **)
+(** val xeh : ehconf -> chars **)
 
-let xroute c r =
+let xeh = function
+| EHDefault -> []
+| EHDlc (q, n0, uo) ->
+  elem "errorHandler" []
+    (elem "deadLetterChannel"
+      (app (attr "deadLetterUri" (app (s "mock:") q))
+        (match uo with
+         | UONone -> []
+         | UOMessage -> attr "useOriginalMessage" (s "true")
+         | UOBody -> attr "useOriginalBody" (s "true")))
+      (empty "redeliveryPolicy"
+        (app (attr "maximumRedeliveries" (ntxt n0))
+          (attr "redeliveryDelay" (s "0")))))
+
+(** val xroute : clause list -> ehconf -> route -> chars **)
+
+let xroute c e r =
   elem "route" (attr "id" r.r_id)
-    (app (empty "from" (attr "uri" (app (s "direct:") r.r_from)))
-      (app (concat_with [] (map xclause c)) (xsteps r.r_steps)))
+    (app (xeh e)
+      (app (empty "from" (attr "uri" (app (s "direct:") r.r_from)))
+        (app (concat_with [] (map xclause c)) (xsteps r.r_steps))))
 
-(** val xml_program : clause list -> route list -> chars **)
+(** val xml_program : clause list -> ehconf -> route list -> chars **)
 
-let xml_program c p =
+let xml_program c e p =
   elem "routes" (attr "xmlns" (s "http://camel.apache.org/schema/xml-io"))
-    (concat_with [] (map (xroute c) p))
+    (concat_with [] (map (xroute c e) p))
 
 (** val s0 : string -> chars **)
 
@@ -22690,20 +22844,42 @@ let yclause k =
                     else [])
                    ((kv0 "steps" (ysteps k.c_steps)) :: [])))))))) :: [])
 
-(** val yroute : route -> chars **)
+(** val yeh : ehconf -> chars list **)
 
-let yroute r =
+let yeh = function
+| EHDefault -> []
+| EHDlc (q, n0, uo) ->
+  (kv0 "errorHandler"
+    (obj
+      ((kv0 "deadLetterChannel"
+         (obj
+           (app ((kv0 "deadLetterUri" (jstr (app (s0 "mock:") q))) :: [])
+             (app
+               (match uo with
+                | UONone -> []
+                | UOMessage -> (kv0 "useOriginalMessage" (s0 "true")) :: []
+                | UOBody -> (kv0 "useOriginalBody" (s0 "true")) :: [])
+               ((kv0 "redeliveryPolicy"
+                  (obj
+                    ((kv0 "maximumRedeliveries" (ntxt0 n0)) :: ((kv0
+                                                                  "redeliveryDelay"
+                                                                  (jstr
+                                                                    (s0 "0"))) :: [])))) :: []))))) :: []))) :: []
+
+(** val yroute : ehconf -> route -> chars **)
+
+let yroute e r =
   obj
     ((kv0 "route"
        (obj
-         ((kv0 "id" (jstr r.r_id)) :: ((kv0 "from"
-                                         (obj
-                                           ((kv0 "uri"
-                                              (jstr
-                                                (app (s0 "direct:") r.r_from))) :: (
-                                           (kv0 "steps" (ysteps r.r_steps)) :: [])))) :: [])))) :: [])
+         (app ((kv0 "id" (jstr r.r_id)) :: [])
+           (app (yeh e)
+             ((kv0 "from"
+                (obj
+                  ((kv0 "uri" (jstr (app (s0 "direct:") r.r_from))) :: (
+                  (kv0 "steps" (ysteps r.r_steps)) :: [])))) :: []))))) :: [])
 
-(** val yaml_program : clause list -> route list -> chars **)
+(** val yaml_program : clause list -> ehconf -> route list -> chars **)
 
-let yaml_program c p =
-  arr (app (map yclause c) (map yroute p))
+let yaml_program c e p =
+  arr (app (map yclause c) (map (yroute e) p))

@@ -354,11 +354,20 @@ public class RouteRun {
             return runSends(ctx, sends, events, globals);
         }
         List<RouteDefinition> defs = new ArrayList<>();
-        Sx clauses = null;
+        Sx clauses = null, eh = null;
         for (Sx r : parseAll(routes)) {
             if (r.head().equals("clauses")) { clauses = r; continue; }
+            if (r.head().equals("eh")) { eh = r; continue; }
             RouteDefinition d = new RouteDefinition("direct:" + r.a(2));
             d.routeId(r.a(1));
+            // the program's error handler (L3.dlc): (eh dlc <mock> <maximumRedeliveries> none|msg|body), redeliveryDelay 0
+            if (eh != null) {
+                var dlc = new org.apache.camel.model.errorhandler.DeadLetterChannelDefinition("mock:" + eh.a(2));
+                dlc.maximumRedeliveries(Integer.parseInt(eh.a(3))).redeliveryDelay(0);
+                if (eh.a(4).equals("msg")) dlc.useOriginalMessage();
+                if (eh.a(4).equals("body")) dlc.useOriginalBody();
+                d.errorHandler(dlc);
+            }
             // the program's onException clauses, as route-scoped copies on every route (TRUST.md)
             if (clauses != null) for (int i = 1; i < clauses.kids.size(); i++) d.addOutput(onException(clauses.kids.get(i)));
             steps(d, r, 3);
@@ -373,7 +382,7 @@ public class RouteRun {
         ctx.start();
         List<String> out = new ArrayList<>();
         try {
-            for (String m : new String[] {"m1", "m2"}) {
+            for (String m : new String[] {"m1", "m2", "dead"}) {
                 MockEndpoint me = ctx.getEndpoint("mock:" + m, MockEndpoint.class);
                 me.whenAnyExchangeReceived(x -> events.add(pct(m) + "=" + snap(x)));
             }

@@ -111,6 +111,10 @@ let pclause (k : clause) =
   ^ (match k.c_handled with None -> "-" | Some true -> "1" | Some false -> "0") ^ " "
   ^ (if k.c_continued then "1" else "0") ^ " " ^ string_of_int k.c_redeliveries ^ psteps k.c_steps ^ ")"
 let pclauses cs = "(clauses" ^ String.concat "" (List.map (fun k -> " " ^ pclause k) cs) ^ ")"
+(* the program's error handler: nothing for the default one, (eh dlc <mock> <redeliveries> none|msg|body) *)
+let peh = function
+  | EHDefault -> []
+  | EHDlc (q, n, uo) -> [ Printf.sprintf "(eh dlc %s %d %s)" (pc q) n (match uo with UONone -> "none" | UOMessage -> "msg" | UOBody -> "body") ]
 let proute (r : route) = "(route " ^ pc r.r_id ^ " " ^ pc r.r_from ^ psteps r.r_steps ^ ")"
 let psend (s : send) =
   "(send " ^ pc s.s_to ^ " " ^ (match s.s_mep with InOnly -> "InOnly" | InOut -> "InOut") ^ " " ^ canon s.s_body
@@ -271,6 +275,7 @@ let gen_block () =
       | 1 -> SSetBody (gen_expr ())
       | 2 -> SSetHeader (chars (pick hkeys), gen_expr ())
       | _ -> STo (EMock (chars (pick [ "m1"; "m2" ]))))
+let gen_eh () = if Random.int 3 = 0 then EHDlc (chars "dead", Random.int 3, pick [ UONone; UOMessage; UOBody ]) else EHDefault
 let gen_clauses () : clause list =
   if Random.int 3 = 0 then []
   else
@@ -315,12 +320,14 @@ let () =
   let fam = Sys.argv.(1) and seed = int_of_string Sys.argv.(2) and count = int_of_string Sys.argv.(3) in
   Random.init seed;
   for i = 1 to count do
-    let clauses, routes, sends = gen_case () in
-    let rs, g = run_case (Sys.getenv_opt "MODE" = Some "real") clauses 400 routes g0 sends in
+    let clauses, routes, sends = if fam = "combo" then Combo.gen_case () else gen_case () in
+    let eh = if fam = "dlc" then EHDlc (chars "dead", Random.int 3, pick [ UONone; UOMessage; UOBody ]) else gen_eh () in
+    let clauses = if fam = "dlc" && Random.bool () then [] else clauses in
+    let rs, g = run_case (Sys.getenv_opt "MODE" = Some "real") clauses eh 400 routes g0 sends in
     count_hits rs;
     let expected = String.concat " " (List.map sres_text rs) ^ " G=" ^ kvs g.g_global in
-    Printf.printf "%s-%d-%d\t%s\t%s\t%s\t%s\t%s\t%s\n" fam seed i (String.concat " " (pclauses clauses :: List.map proute routes))
-      (String.concat " " (List.map psend sends)) expected fam (pc (xml_program clauses routes)) (pc (yaml_program clauses routes))
+    Printf.printf "%s-%d-%d\t%s\t%s\t%s\t%s\t%s\t%s\n" fam seed i (String.concat " " (pclauses clauses :: peh eh @ List.map proute routes))
+      (String.concat " " (List.map psend sends)) expected fam (pc (xml_program clauses eh routes)) (pc (yaml_program clauses eh routes))
   done
   ;
   if Array.length Sys.argv > 4 then begin

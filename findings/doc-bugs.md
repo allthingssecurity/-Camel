@@ -85,3 +85,15 @@ Camel aa63c0a4cb94. Each entry: page and line, what it says, what Camel does, ev
   order in which Camel starts them at startup)", as graceful-shutdown.adoc 138-139 already says.
 - (with the finding) configuring-route-startup-ordering-and-autostartup.adoc 188-196: true only for the first start of
   each route; until the finding is fixed, the numbers of routes without startupOrder grow with every restart.
+
+## L3 dead letter channel (main session, 2026-10-26)
+
+- error-handler.adoc 58-62: "The Dead Letter Channel will redeliver at most 6 times using 1-second delay" contradicts
+  dead-letter-channel.adoc 142-151 ("Redelivery is disabled by default ... The maximumRedeliveries is set to 0") and
+  model/deadLetterChannel.json. The 6 is from Camel 2.x.
+- An onException clause without steps but with handled set explicitly, under a dead letter channel: the docs say
+  handled(true) means "only the steps in this onException block execute" (model onException.handled), and that
+  handled(false) propagates the exception back. Camel moves the exchange to the dead letter queue and the caller sees
+  no exception, in both cases (harness/probes/DlcEmptyClauseProbe.java). With a step in the clause, the same
+  handled(false) propagates the exception. Candidate: document that a step-less clause only overrides the redelivery
+  and leaves the outcome to the error handler.

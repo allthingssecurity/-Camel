@@ -20,6 +20,7 @@ Section Det.
 Variable P : list route.
 Variable real : bool.
 Variable C : list clause.
+Variable EHc : ehconf.
 
 Scheme bss_m := Induction for bss Sort Prop
 with bs1_m := Induction for bs1 Sort Prop
@@ -52,9 +53,14 @@ Ltac fun_eq :=
   end.
 Ltac step :=
   first [ match goal with H : ?a = ?a |- _ => clear H end
+        | match goal with H : dlc_fail _ _ ?x ?e = Some _ |- _ =>
+            lazymatch goal with _ : (x_eh x && clause_matches _ _ (set_exn x (Some e))) = true |- _ => fail | _ =>
+              pose proof (dlc_fail_matches _ _ _ _ _ H) end end
         | use_ih
         | fun_eq
         | match goal with H : _ \/ _ |- _ => destruct H as [H | H] end
+        | match goal with H : _ /\ _ |- _ => destruct H as [? ?] end
+        | match goal with H : EHDlc _ _ _ = EHDlc _ _ _ |- _ => inversion H; subst; clear H end
         | match goal with H : ?a = ?c, H' : context [?a] |- _ =>
             lazymatch a with ?f _ => idtac end;
             lazymatch type of H' with a = c => fail | _ => rewrite H in H'; simpl in H' end end ].
@@ -63,28 +69,28 @@ Ltac det := repeat step; unfold same3; try discriminate; try congruence; try (sp
 Combined Scheme rules_mut from bss_m, bs1_m, bmc_m, bsp_m, bdr_m, bfo_m, blp_m, blw_m, baft_m, bfin_m, bch_m.
 
 Theorem rules_deterministic :
-  (forall g x ss g1 x1 t1, bss P real C g x ss g1 x1 t1 ->
-     forall g2 x2 t2, bss P real C g x ss g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x s g1 x1 t1, bs1 P real C g x s g1 x1 t1 ->
-     forall g2 x2 t2, bs1 P real C g x s g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x st bs acc g1 x1 t1, bmc P real C g x st bs acc g1 x1 t1 ->
-     forall g2 x2 t2, bmc P real C g x st bs acc g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x o body l n acc g1 x1 t1, bsp P real C g x o body l n acc g1 x1 t1 ->
-     forall g2 x2 t2, bsp P real C g x o body l n acc g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x e d g1 x1 t1, bdr P real C g x e d g1 x1 t1 ->
-     forall g2 x2 t2, bdr P real C g x e d g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x exs k bs g1 x1 t1, bfo P real C g x exs k bs g1 x1 t1 ->
-     forall g2 x2 t2, bfo P real C g x exs k bs g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x cp body n orig g1 x1 t1, blp P real C g x cp body n orig g1 x1 t1 ->
-     forall g2 x2 t2, blp P real C g x cp body n orig g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x e body g1 x1 t1, blw P real C g x e body g1 x1 t1 ->
-     forall g2 x2 t2, blw P real C g x e body g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x cs fin g1 x1 t1, baft P real C g x cs fin g1 x1 t1 ->
-     forall g2 x2 t2, baft P real C g x cs fin g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x p fin g1 x1 t1, bfin P real C g x p fin g1 x1 t1 ->
-     forall g2 x2 t2, bfin P real C g x p fin g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
-  (forall g x ws o g1 x1 t1, bch P real C g x ws o g1 x1 t1 ->
-     forall g2 x2 t2, bch P real C g x ws o g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2).
+  (forall g x ss g1 x1 t1, bss P real C EHc g x ss g1 x1 t1 ->
+     forall g2 x2 t2, bss P real C EHc g x ss g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x s g1 x1 t1, bs1 P real C EHc g x s g1 x1 t1 ->
+     forall g2 x2 t2, bs1 P real C EHc g x s g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x st bs acc g1 x1 t1, bmc P real C EHc g x st bs acc g1 x1 t1 ->
+     forall g2 x2 t2, bmc P real C EHc g x st bs acc g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x o body l n acc g1 x1 t1, bsp P real C EHc g x o body l n acc g1 x1 t1 ->
+     forall g2 x2 t2, bsp P real C EHc g x o body l n acc g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x e d g1 x1 t1, bdr P real C EHc g x e d g1 x1 t1 ->
+     forall g2 x2 t2, bdr P real C EHc g x e d g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x exs k bs g1 x1 t1, bfo P real C EHc g x exs k bs g1 x1 t1 ->
+     forall g2 x2 t2, bfo P real C EHc g x exs k bs g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x cp body n orig g1 x1 t1, blp P real C EHc g x cp body n orig g1 x1 t1 ->
+     forall g2 x2 t2, blp P real C EHc g x cp body n orig g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x e body g1 x1 t1, blw P real C EHc g x e body g1 x1 t1 ->
+     forall g2 x2 t2, blw P real C EHc g x e body g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x cs fin g1 x1 t1, baft P real C EHc g x cs fin g1 x1 t1 ->
+     forall g2 x2 t2, baft P real C EHc g x cs fin g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x p fin g1 x1 t1, bfin P real C EHc g x p fin g1 x1 t1 ->
+     forall g2 x2 t2, bfin P real C EHc g x p fin g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2) /\
+  (forall g x ws o g1 x1 t1, bch P real C EHc g x ws o g1 x1 t1 ->
+     forall g2 x2 t2, bch P real C EHc g x ws o g2 x2 t2 -> same3 g1 x1 t1 g2 x2 t2).
 Proof.
   apply rules_mut; intros;
     lazymatch goal with H : _ |- _ => inversion H; subst; clear H end; det.
@@ -92,6 +98,6 @@ Qed.
 
 (** The form used most: a list of steps (a route body) has one outcome. *)
 Corollary steps_deterministic : forall g x ss g1 x1 t1 g2 x2 t2,
-  bss P real C g x ss g1 x1 t1 -> bss P real C g x ss g2 x2 t2 -> g1 = g2 /\ x1 = x2 /\ t1 = t2.
+  bss P real C EHc g x ss g1 x1 t1 -> bss P real C EHc g x ss g2 x2 t2 -> g1 = g2 /\ x1 = x2 /\ t1 = t2.
 Proof. intros. exact (proj1 rules_deterministic _ _ _ _ _ _ H _ _ _ H0). Qed.
 End Det.

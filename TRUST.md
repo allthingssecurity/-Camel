@@ -47,3 +47,7 @@ A differential result is only as good as these pieces, which no proof covers:
    compared sorted, "?" fields are not compared, and a case agrees when one of the two sus traces matches.
 15. **L4** harness/l4/probes/CounterProbe.java reads InternalRouteStartupManager.defaultRouteStartupOrder by reflection; it was
    used only to design the Real-mode delta, never in a comparison.
+16. **L3 dead letter channel** (harness/route/RouteRun.java): the program's `(eh dlc <mock> <n> none|msg|body)` is a
+   DeadLetterChannelDefinition (maximumRedeliveries n, redeliveryDelay 0, useOriginalMessage / useOriginalBody) set on
+   every route with RouteDefinition.errorHandler (as the route-level `<errorHandler>` of error-handler.adoc 259-268),
+   next to the route-scoped onException copies of item 8; mock:dead is recorded like mock:m1/m2.

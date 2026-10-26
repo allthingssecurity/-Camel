@@ -8,6 +8,7 @@
       [M:x] model/x.json: the "kind" of each option: "attribute" is an XML attribute, "element" / "expression" a
             child element, "outputs" the steps as child elements (the EIP pages show the same in their XML tabs)
       [SPL] core/camel-core-engine/src/main/docs/modules/eips/pages/split-eip.adoc (the #class: reference syntax)
+      [EH]  docs/user-manual/modules/ROOT/pages/error-handler.adoc; [M:deadLetterChannel] model/deadLetterChannel.json
     XML escaping of text and attribute values is XML itself, not Camel documentation (TRUST.md). *)
 From Stdlib Require Import ZArith String Ascii List Bool.
 From CamelSpec.Common Require Import Text.
@@ -142,8 +143,21 @@ Definition xclause (k : clause) : chars :=
 (** [<routes xmlns="http://camel.apache.org/schema/xml-io">] holding [<route id>] elements, each starting with
     [<from uri>] [XIO.33-41]; the program's clauses are written into every route (route-scoped copies, as the
     model-API harness does: TRUST.md 8). *)
-Definition xroute (C : list clause) (r : route) : chars :=
+(*! R L6.xml.errorHandler DOC [EH.259-268] [M:deadLetterChannel] *)
+(** The route's error handler as in [EH.259-268]: [<errorHandler><deadLetterChannel deadLetterUri>] with a
+    [redeliveryPolicy] and the useOriginalMessage / useOriginalBody attributes [M:deadLetterChannel]; nothing for the
+    default error handler. *)
+Definition xeh (E : ehconf) : chars :=
+  match E with
+  | EHDefault => []
+  | EHDlc q n uo =>
+      elem "errorHandler" [] (elem "deadLetterChannel" (attr "deadLetterUri" (s "mock:" ++ q) ++
+                                match uo with UONone => [] | UOMessage => attr "useOriginalMessage" (s "true")
+                                            | UOBody => attr "useOriginalBody" (s "true") end)
+        (empty "redeliveryPolicy" (attr "maximumRedeliveries" (ntxt n) ++ attr "redeliveryDelay" (s "0"))))
+  end.
+Definition xroute (C : list clause) (E : ehconf) (r : route) : chars :=
   elem "route" (attr "id" (r_id r))
-       (empty "from" (attr "uri" (s "direct:" ++ r_from r)) ++ concat_with [] (map xclause C) ++ xsteps (r_steps r)).
-Definition xml_program (C : list clause) (P : list route) : chars :=
-  elem "routes" (attr "xmlns" (s "http://camel.apache.org/schema/xml-io")) (concat_with [] (map (xroute C) P)).
+       (xeh E ++ empty "from" (attr "uri" (s "direct:" ++ r_from r)) ++ concat_with [] (map xclause C) ++ xsteps (r_steps r)).
+Definition xml_program (C : list clause) (E : ehconf) (P : list route) : chars :=
+  elem "routes" (attr "xmlns" (s "http://camel.apache.org/schema/xml-io")) (concat_with [] (map (xroute C E) P)).
