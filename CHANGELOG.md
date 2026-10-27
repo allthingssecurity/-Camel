@@ -145,3 +145,4 @@ Format: date | rule | old -> new | tag | evidence.
 - 2026-10-26 | L3.onCompletion.before-original.real | InOut only -> every MEP (runs/sc3-xml-real scope-717-829: InOnly after a transform) | CODE.
 - 2026-10-26 | L2.aggregate.timeout (new, in progress) | - -> completionTimeout / discardOnCompletionTimeout / forceCompletionOnStop with abstract time (wait/stop sends) | DOC.
 - 2026-10-27 | gold_route_spec (new, theories/L2/RouteProofs.v) | - -> a proof about one concrete route (filter-eip.adoc 255-262) for every message | proof.
+- 2026-10-27 | Core (new, theories/Core/Core.v) | - -> a 4-construct core (skip, leaf, then, if); filter, choice, pipeline translated into it; translation_sound: every outcome of the rules is an outcome of the translated core program | proof.
